@@ -149,6 +149,7 @@ const duel = (a: string, b: string) => {
 { // "1 of 3" select: every player in a full 5v5 gets three distinct options
   const room = new GameRoom();
   (room as any)._listing = {};
+  (room as any).lock = async () => {}; // needs the matchmaker driver
   room.onCreate({ mode: "5v5", selectMode: "three" });
   for (let i = 0; i < 10; i++) room.onJoin({ sessionId: `p${i}` } as any, { name: `p${i}` });
   room.startSelect();

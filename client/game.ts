@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { BRIDGE, BUSHES, CHAMPS, FOUNTAIN_X, ITEMS, RELICS, RUNES, SHOP_RADIUS, SPELLS, champ, inBush, item, side, xpFor } from "../shared/data";
 import { music, sfx, speak, startMusic, stopMusic, vol, applyVolume } from "./audio";
 import { esc, h, splash } from "./main";
-import { type Rig, bushModel, champModel, inhibModel, mercadonaModel, mesh, nexusModel, pigeonModel, relicModel, shopModel, stoneTex, textSprite, toon, towerModel } from "./models";
+import { type Rig, bushModel, champModel, inhibModel, loadChampModels, mercadonaModel, mesh, nexusModel, pigeonModel, relicModel, shopModel, stoneTex, textSprite, toon, towerModel } from "./models";
 
 const ICONS: Record<string, string[]> = {
   ezreal: ["✴️", "🔮", "⚡", "🌊", "💫"], annie: ["🔥", "🌋", "🛡️", "🧸", "🎀"], ryze: ["📜", "⛓️", "🔵", "🌀", "📘"],
@@ -82,7 +82,7 @@ export async function prepare(room: Room<any, any>, report: (p: number) => void)
   report(60);
   buildMap();
   report(80);
-  await tick();
+  await loadChampModels();
   // warm up shader compile with one of each model
   for (const c of CHAMPS) { const r = champModel(c.id, c.color, c.accent); r.root.position.set(0, -50, 0); scene.add(r.root); tweens.push({ t: 0, dur: 0.1, fn: () => {}, end: () => scene.remove(r.root) }); }
   renderer.compile(scene, camera);
@@ -316,16 +316,19 @@ function animChamp(v: View, u: any, dt: number, t: number) {
   const r = v.rig!;
   v.obj.rotation.y = v.rot;
   const fx: string = u.fx;
-  if (u.atk !== v.atk) { v.atk = u.atk; v.atkT = 0.25; }
+  if (u.atk !== v.atk) { v.atk = u.atk; v.atkT = 0.25; r.anim?.shot("attack"); }
   v.atkT = Math.max(0, v.atkT - dt);
-  const walk = u.moving && !u.dead ? Math.sin(t * 12) : 0;
-  r.body.position.y = u.moving ? Math.abs(walk) * 0.08 : Math.sin(t * 2) * 0.02;
-  r.armL.rotation.x = walk * 0.6;
-  r.armR.rotation.x = v.atkT > 0 ? -Math.sin((v.atkT / 0.25) * Math.PI) * 2 : -walk * 0.6;
+  if (r.anim) { r.anim.state(u.dead ? "death" : fx.includes("recall") ? "recall" : u.moving ? "run" : "idle"); r.anim.mixer.update(dt); r.body.position.y = 0; }
+  else {
+    const walk = u.moving && !u.dead ? Math.sin(t * 12) : 0;
+    r.body.position.y = u.moving ? Math.abs(walk) * 0.08 : Math.sin(t * 2) * 0.02;
+    r.armL.rotation.x = walk * 0.6;
+    r.armR.rotation.x = v.atkT > 0 ? -Math.sin((v.atkT / 0.25) * Math.PI) * 2 : -walk * 0.6;
+  }
   // levitation (Kanye manic), death, siesta
   let lift = fx.includes("manic") ? 0.9 + Math.sin(t * 3) * 0.15 : 0;
   r.body.rotation.x = 0; r.body.rotation.z = 0;
-  if (u.dead) { r.body.rotation.x = -Math.PI / 2; lift = 0.3; }
+  if (u.dead) { if (!r.anim) { r.body.rotation.x = -Math.PI / 2; lift = 0.3; } }
   else if (fx.includes("siesta")) { r.body.rotation.z = Math.PI / 2; lift = 0.3; }
   else if (u.cc === "knockup") lift = 1.2;
   else if (u.cc === "suppress") { r.body.rotation.y = t * 8; }
@@ -339,7 +342,7 @@ function animChamp(v: View, u: any, dt: number, t: number) {
     const fil = fx.includes("filemon");
     r.extra.filemon.position.lerp(new THREE.Vector3(fil ? 0 : 0.7, 0, fil ? 0.9 : -0.6), Math.min(1, dt * 6));
     r.body.position.z = fil ? -0.6 : 0;
-    (r.extra.filArmR as THREE.Object3D).rotation.x = v.atkT > 0 && fil ? -2 : 0;
+    if (r.extra.filArmR) r.extra.filArmR.rotation.x = v.atkT > 0 && fil ? -2 : 0;
   }
   // disguises
   const plant = fx.includes("plant"), amogus = fx.includes("amogus");
@@ -511,6 +514,7 @@ const spatial = (x: number, z: number) => Math.max(0.1, 1 - distToMe(x, z) / 40)
 
 function onFx(m: any) {
   const v = m.id ? views.get(m.id) : undefined;
+  if (m.champ && m.slot !== undefined) v?.rig?.anim?.shot("spell", m.slot); // doCast fx
   const x = m.x ?? v?.x ?? 0, z = m.z ?? v?.z ?? 0, vol = spatial(x, z);
   const col = m.color ?? 0xffffff;
   const dir = () => { const dx = m.tx - x, dz = m.tz - z, l = Math.hypot(dx, dz) || 1; return { dx: dx / l, dz: dz / l, l }; };

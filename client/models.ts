@@ -1,5 +1,8 @@
 // Procedural cel-shaded models built from primitives (no external assets).
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { clone as skClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { side } from "../shared/data";
 
 const grad = (() => {
@@ -53,7 +56,9 @@ export function textSprite(text: string, color = "#fff", size = 64, stroke = "#0
 }
 
 // ---------------------------------------------------------------- champions
-export interface Rig { root: THREE.Group; body: THREE.Object3D; armL: THREE.Object3D; armR: THREE.Object3D; extra: Record<string, THREE.Object3D> }
+export interface Rig { root: THREE.Group; body: THREE.Object3D; armL: THREE.Object3D; armR: THREE.Object3D; extra: Record<string, THREE.Object3D>; anim?: Anim }
+// Clip-driven GLB champions: game.ts sets the looping base state every frame and fires one-shots on attack/cast.
+export interface Anim { mixer: THREE.AnimationMixer; state(s: "idle" | "run" | "recall" | "death"): void; shot(kind: "attack" | "spell", slot?: number): void }
 
 function humanoid(o: { skin?: number; shirt: number; pants?: number; height?: number; girth?: number; head?: number }): Rig {
   const root = new THREE.Group(), body = new THREE.Group();
@@ -75,7 +80,81 @@ const shades = (y: number, color = 0x111111) => { const g = new THREE.Group(); f
 const eyes = (y: number) => { const g = new THREE.Group(); for (const s of [-1, 1]) g.add(at(mesh(sph(0.04, 6), 0x111111, {}, false), 0.09 * s, y, 0.23)); return g; };
 const chain = (y: number) => at(mesh(new THREE.TorusGeometry(0.22, 0.03, 6, 16), 0xffd24a, { emissive: 0x553300 }), 0, y, 0.08, 1.2);
 
+// Blender-made meme champions (blender/meme_champs.py): nodes "body" + named extras, clips idle/run/attack/cast/death.
+// Sketchfab LoL champions (models/CREDITS.txt): original LoL rigs + clips, normalized here to HEIGHT (world units).
+const GLB_CHAMPS = ["torrente", "kanye", "epstein", "diddy", "mortadelo"];
+const HEIGHT: Record<string, number> = { ezreal: 1.9, annie: 1.3, jhin: 1.9, caitlyn: 1.9, garen: 2.2, darius: 2.2, illaoi: 2.1, karma: 1.9 };
+const glbs = new Map<string, { scene: THREE.Object3D; clips: THREE.AnimationClip[] }>();
+export async function loadChampModels() {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  await Promise.all([...GLB_CHAMPS, ...Object.keys(HEIGHT)].map(id => loader.loadAsync(`/models/${id}.glb`).then(g => {
+    const meshes: THREE.Mesh[] = [];
+    g.scene.traverse(o => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+    meshes.forEach(m => {
+      const src = m.material as THREE.MeshStandardMaterial, e = src.emissive.getHex();
+      m.castShadow = true;
+      if (src.map) { // ponytail: textured Sketchfab meshes get no inverted-hull outline (skinned + arbitrary node scale)
+        m.material = new THREE.MeshToonMaterial({ map: src.map, color: src.color, gradientMap: grad, transparent: src.transparent, alphaTest: src.alphaTest, side: src.side });
+        m.frustumCulled = false; // skinned bounds are bind-pose only
+        return;
+      }
+      const opts: THREE.MeshToonMaterialParameters = { ...(e ? { emissive: e } : {}), ...(src.opacity < 1 ? { transparent: true, opacity: src.opacity } : {}) };
+      m.material = toon(src.color.getHex(), opts);
+      if (!opts.transparent) m.add(new THREE.Mesh(m.geometry, outlineMat));
+    });
+    let scene = g.scene;
+    if (HEIGHT[id]) { // wrap as root > body > model, feet at y=0, centred, idle-posed height = HEIGHT
+      const body = new THREE.Group(); body.name = "body"; body.add(g.scene);
+      scene = new THREE.Group(); scene.add(body);
+      if (g.animations.length) clipAnim(scene, g.animations).mixer.update(0);
+      const box = new THREE.Box3().setFromObject(scene), size = box.getSize(new THREE.Vector3());
+      g.scene.scale.multiplyScalar(HEIGHT[id] / size.y);
+      box.setFromObject(scene);
+      const c = box.getCenter(new THREE.Vector3());
+      g.scene.position.sub(new THREE.Vector3(c.x, box.min.y, c.z));
+    }
+    glbs.set(id, { scene, clips: g.animations });
+  }, e => console.warn(`champ glb ${id} failed, using procedural model`, e))));
+}
+function clipAnim(root: THREE.Object3D, clips: THREE.AnimationClip[]): Anim {
+  type A = THREE.AnimationAction;
+  const mixer = new THREE.AnimationMixer(root);
+  // LoL names look like "garen_2013_idle1.anm" / "spell2_to_run.anm"; Blender ones are bare "idle", "cast".
+  // skip tests the rest of the name, so "spell2_idle" / "run_to_idle" / "run_spell1" don't count as idle / spell1.
+  const clip = (re: RegExp, skip = /spell|recall|_to$/) => clips.find(c => { const nm = c.name.replace(/\.anm$/, ""); return re.test(nm) && !skip.test(nm.replace(re, "")); });
+  const act = (c?: THREE.AnimationClip, once = false) => { if (!c) return; const a = mixer.clipAction(c); if (once) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; } return a; };
+  const idle = act(clip(/(^|_)idle0?1?$/) ?? clips[0])!;
+  const base = { idle, run: act(clip(/(^|_)run0?1?$/)) ?? idle, recall: act(clip(/(^|_)recall$/, /$^/)) ?? idle, death: act(clip(/(^|_)death$/), true) ?? idle };
+  const atk = [/(^|_)attack(_?0?1)?$/, /(^|_)attack_?0?2$/].map(re => act(clip(re), true)).filter(a => a) as A[];
+  const cast = act(clip(/(^|_)cast$/), true);
+  const spells = [1, 2, 3, 4].map(n => act(clip(new RegExp(`(^|_)spell${n}$`), /run|_to$/), true) ?? cast ?? atk[0]);
+  let cur: A = idle, loop: A = idle, shot: A | undefined, n = 0, dead = false;
+  const fade = (a: A) => { if (a !== cur) { a.reset().play(); cur.crossFadeTo(a, 0.15, false); cur = a; } };
+  idle.play();
+  mixer.addEventListener("finished", e => { if (e.action === shot) { shot = undefined; fade(loop); } });
+  return {
+    mixer,
+    state(s) { dead = s === "death"; if (base[s] === loop) return; loop = base[s]; if (!shot || dead) { shot = undefined; fade(loop); } },
+    shot(kind, slot = 0) {
+      const a = kind === "attack" ? atk[n++ % Math.max(1, atk.length)] : spells[slot];
+      if (!a || dead) return;
+      a.timeScale = kind === "attack" ? Math.max(1, a.getClip().duration / 0.6) : 1; // keep swings snappy vs attack speed
+      shot = a;
+      if (a === cur) a.reset(); else fade(a);
+    },
+  };
+}
+function glbRig(g: { scene: THREE.Object3D; clips: THREE.AnimationClip[] }): Rig {
+  const root = skClone(g.scene) as THREE.Group, extra: Record<string, THREE.Object3D> = {}, find = (k: string) => root.getObjectByName(k);
+  for (const k of ["belly", "tank", "halo", "sheet", "filemon", "filArmR"]) { const o = find(k); if (o) extra[k] = o; }
+  const body = find("body") ?? root;
+  return { root, body, armL: find("armL") ?? new THREE.Object3D(), armR: find("armR") ?? new THREE.Object3D(), extra, anim: g.clips.length ? clipAnim(root, g.clips) : undefined };
+}
+const orbs = (r: Rig) => { for (let i = 0; i < 3; i++) r.body.add(r.extra["orb" + i] = at(mesh(sph(0.1), 0x5affff, { emissive: 0x228888 }, false), 0, 1.3, 0)); };
+
 export function champModel(id: string, color: number, accent: number): Rig {
+  const glb = glbs.get(id);
+  if (glb) { const r = glbRig(glb); if (id === "karma") orbs(r); return r; }
   let r: Rig;
   switch (id) {
     case "ezreal": r = humanoid({ shirt: color }); r.body.add(at(mesh(cone(0.3, 0.35, 8), 0xf2c94c), 0, 1.68, -0.02, -0.3)); r.armR.add(at(mesh(sph(0.15), 0xf2c94c, { emissive: 0x886600 }), 0, -0.52, 0)); r.body.add(eyes(1.48)); break;
@@ -87,7 +166,7 @@ export function champModel(id: string, color: number, accent: number): Rig {
     case "darius": r = humanoid({ shirt: color, girth: 1.3, height: 1.15, pants: 0x222222 }); for (const s of [-1, 1]) r.body.add(at(mesh(cone(0.18, 0.35, 6), 0x222222), 0.45 * s, 1.45, 0)); { const axe = new THREE.Group(); axe.add(mesh(cyl(0.04, 0.04, 1.4), 0x3a2a1a)); axe.add(at(mesh(cyl(0.4, 0.4, 0.05, 12), 0x999999), 0.2, 0.6, 0, Math.PI / 2)); r.armR.add(at(axe, 0, -0.6, 0.2)); } r.body.add(eyes(1.7)); break;
     case "rammus": { r = humanoid({ shirt: 0x8a6a3a, height: 0.7, girth: 1.4, skin: 0xb89060 }); const shell = mesh(new THREE.SphereGeometry(0.62, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), 0x8a6a3a); r.body.add(at(shell, 0, 0.75, -0.05)); for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; r.body.add(at(mesh(cone(0.08, 0.3, 5), 0xd7b56d), Math.cos(a) * 0.45, 1.05, Math.sin(a) * 0.45 - 0.05, Math.sin(a) * 0.6, 0, -Math.cos(a) * 0.6)); } r.body.add(eyes(1.0)); break; }
     case "illaoi": r = humanoid({ shirt: color, skin: 0x9a6b40, girth: 1.2 }); r.armR.add(at(mesh(box(0.35, 0.35, 0.35), 0xe8c14c, { emissive: 0x443300 }), 0, -0.6, 0.1)); r.body.add(eyes(1.48)); break;
-    case "karma": r = humanoid({ shirt: color, skin: 0xd9a066 }); r.body.add(at(mesh(cone(0.45, 0.8, 10), color), 0, 0.5, 0)); for (let i = 0; i < 3; i++) r.body.add(r.extra["orb" + i] = at(mesh(sph(0.1), 0x5affff, { emissive: 0x228888 }, false), 0, 1.3, 0)); r.body.add(eyes(1.48)); break;
+    case "karma": r = humanoid({ shirt: color, skin: 0xd9a066 }); r.body.add(at(mesh(cone(0.45, 0.8, 10), color), 0, 0.5, 0)); orbs(r); r.body.add(eyes(1.48)); break;
     case "torrente": {
       r = humanoid({ shirt: 0x5a6b4a, girth: 1.55, height: 0.95, head: 1.15, pants: 0x333333 });
       r.body.add(r.extra.belly = at(mesh(sph(0.45), 0xf1c27d), 0, 0.72, 0.12));

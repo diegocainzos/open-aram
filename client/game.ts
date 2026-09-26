@@ -197,7 +197,7 @@ function loop() {
   if (!alive) return;
   raf = requestAnimationFrame(loop);
   clock.update();
-  let dt = Math.min(0.05, clock.getDelta());
+  const dt = Math.min(0.05, clock.getDelta());
   const now = performance.now() / 1000;
   const slow = slowmoUntil > now ? 0.3 : 1;
   syncUnits(dt * slow);
@@ -212,7 +212,6 @@ function loop() {
   updateCamera(dt, now);
   updateHud();
   renderer.render(scene, camera);
-  dt = 0;
 }
 
 function myUnit() { return R.state.units.get(me); }
@@ -235,14 +234,13 @@ function updateCamera(dt: number, now: number) {
 }
 
 // ---------------------------------------------------------------- units
-function visibleToMe(u: any, id: string) {
+function visibleToMe(u: any) {
   if (u.team === myTeam || u.team === 2) return true;
   if (u.stealth) return false;
   const b = inBush(u.x, u.z);
   if (b < 0) return true;
   let seen = false;
   R.state.units.forEach((a: any) => { if (!seen && a.team === myTeam && !a.dead && a.kind === "champ" && inBush(a.x, a.z) === b) seen = true; });
-  void id;
   return seen;
 }
 
@@ -295,7 +293,7 @@ function syncUnits(dt: number) {
     let dr = u.rot - v.rot;
     dr = Math.atan2(Math.sin(dr), Math.cos(dr));
     v.rot += dr * Math.min(1, dt * 14);
-    v.vis = visibleToMe(u, id);
+    v.vis = visibleToMe(u);
     v.obj.visible = v.vis && !(u.kind === "champ" && u.fx.includes("fakedeath") && u.team !== myTeam);
     v.obj.position.set(v.x, 0, v.z);
     if (u.kind === "champ") animChamp(v, u, dt, t);
@@ -815,8 +813,7 @@ function bindInput() {
   window.addEventListener("keyup", onKeyUp);
 }
 function clickMarker(p: THREE.Vector3) {
-  const g = ring(p.x, p.z, 0.5, 0x40ff80, 0.4, 0, 0.1);
-  void g;
+  ring(p.x, p.z, 0.5, 0x40ff80, 0.4, 0, 0.1);
 }
 function sendPing(type: string, p = mouse.world) { R.send("ping", { x: p.x, z: p.z, type }); }
 

@@ -101,7 +101,7 @@ table.rooms tr.room:hover { background: #c8aa6e18; cursor: pointer; }
 .hbar .bx { display: flex; align-items: center; gap: 2px; }
 .hbar .lv { background: #111; border: 1px solid var(--gold); font-size: 10px; width: 16px; height: 16px; line-height: 14px; font-weight: 800; }
 .hbar .hp { width: 90px; height: 10px; background: #111; border: 1px solid #000; position: relative; overflow: hidden; }
-.hbar .hp i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--hp); }
+.hbar .hp i { position: absolute; left: 0; top: 0; bottom: 0; }
 .hbar .hp s { position: absolute; top: 0; bottom: 0; background: #fff; }
 .hbar .hp b { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 8px, #0008 8px 9px); }
 .hbar.enemy .hp i { background: #d33; } .hbar.ally .hp i { background: #3a8cff; } .hbar.me .hp i { background: #3fb34f; }

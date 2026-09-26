@@ -16,7 +16,7 @@ interface Proj {
   dx?: number; dz?: number; left?: number; pierce?: boolean; hit?: Set<string>; target?: string;
   onHit: (t: RT) => void; onMiss?: () => void;
 }
-export interface RT {
+interface RT {
   id: string; u: Unit; c?: Champ; r: number; order?: number;
   mt?: { x: number; z: number }; target?: string; atkT: number; pending?: { slot: number; tid?: string; x: number; z: number };
   buffs: Buff[]; ccs: CCe[]; shields: { amt: number; until: number }[]; dots: Dot[]; dash?: Dash;
@@ -103,7 +103,6 @@ export class Sim {
 
   // ---------------------------------------------------------------- helpers
   has(rt: RT, t: CC) { return rt.ccs.some(c => c.type === t); }
-  isChamp(rt?: RT): rt is RT & { c: Champ } { return !!rt?.c; }
   isStruct(rt: RT) { return rt.order !== undefined; }
   canMove(rt: RT) {
     return !rt.u.dead && rt.fakeUntil <= this.now && rt.siestaUntil <= this.now && rt.tpT <= 0 &&

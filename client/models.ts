@@ -1,5 +1,6 @@
 // Procedural cel-shaded models built from primitives (no external assets).
 import * as THREE from "three";
+import { side } from "../shared/data";
 
 const grad = (() => {
   const t = new THREE.DataTexture(new Uint8Array([90, 170, 255]), 3, 1, THREE.RedFormat);
@@ -30,7 +31,7 @@ const sph = (r: number, s = 14) => new THREE.SphereGeometry(r, s, s * 0.75);
 const cyl = (rt: number, rb: number, h: number, s = 12) => new THREE.CylinderGeometry(rt, rb, h, s);
 const cone = (r: number, h: number, s = 10) => new THREE.ConeGeometry(r, h, s);
 
-export function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D) => void) {
+function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D) => void) {
   const cv = document.createElement("canvas");
   cv.width = w; cv.height = h;
   draw(cv.getContext("2d")!);
@@ -157,7 +158,7 @@ const PARTY = [
   { bg: "#e30613", fg: "#fff", name: "PSOE" },
   { bg: "#1d84ce", fg: "#fff", name: "PP" },
 ];
-export function bannerTex(team: number) {
+function bannerTex(team: number) {
   const p = PARTY[team];
   return canvasTex(256, 512, c => {
     c.fillStyle = p.bg; c.fillRect(0, 0, 256, 512);
@@ -186,7 +187,6 @@ export function towerModel(team: number) {
   g.userData.crystal = crystal;
   const banner = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 3.6, 8, 1), new THREE.MeshToonMaterial({ map: bannerTex(team), gradientMap: grad, side: THREE.DoubleSide }));
   for (const s of [-1, 1]) g.add(at(banner.clone(), 0, 4.8, 0.95 * s, 0, s < 0 ? Math.PI : 0));
-  g.userData.banner = banner;
   return g;
 }
 
@@ -216,13 +216,13 @@ export function nexusModel(team: number) {
       const seat = new THREE.Group();
       seat.add(mesh(box(0.35, 0.18, 0.3), 0xb0282b));
       seat.add(at(mesh(box(0.35, 0.35, 0.08), 0xb0282b), 0, 0.2, -0.12));
-      seat.position.set(-Math.cos(a) * r * side0(team), 0.75 + row * 0.22, Math.sin(a) * r);
+      seat.position.set(-Math.cos(a) * r * side(team), 0.75 + row * 0.22, Math.sin(a) * r);
       seat.lookAt(0, seat.position.y, 0);
       seats.push(seat); g.add(seat);
     }
   }
   // podium + facade
-  g.add(at(mesh(box(0.9, 0.9, 1.6), 0x6a4a2a), 0.6 * side0(team), 1, 0));
+  g.add(at(mesh(box(0.9, 0.9, 1.6), 0x6a4a2a), 0.6 * side(team), 1, 0));
   const facade = new THREE.Group();
   facade.add(at(mesh(box(1, 0.4, 6), 0xe8e2d0), 0, 0.2, 0));
   for (let i = 0; i < 6; i++) facade.add(at(mesh(cyl(0.2, 0.22, 3, 10), 0xf0ead8), 0, 1.9, -2.5 + i));
@@ -230,17 +230,16 @@ export function nexusModel(team: number) {
   const ped = new THREE.Shape([new THREE.Vector2(-3.1, 0), new THREE.Vector2(3.1, 0), new THREE.Vector2(0, 1.3)]);
   facade.add(at(mesh(new THREE.ExtrudeGeometry(ped, { depth: 0.8, bevelEnabled: false }), 0xe8e2d0), -0.4, 3.8, 0, 0, Math.PI / 2));
   for (const s of [-1, 1]) facade.add(at(mesh(sph(0.35), 0x9a7a3a), 0.6, 0.65, 3.4 * s)); // lions
-  g.add(at(facade, 3.2 * side0(team), 0.5, 0));
+  g.add(at(facade, 3.2 * side(team), 0.5, 0));
   const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9), new THREE.MeshToonMaterial({ map: bannerTex(team), gradientMap: grad, side: THREE.DoubleSide }));
-  g.add(at(mesh(cyl(0.04, 0.04, 3), 0x999999), 3.2 * side0(team), 6.5, 0));
-  g.add(at(flag, 3.2 * side0(team), 7.5, 0.72));
+  g.add(at(mesh(cyl(0.04, 0.04, 3), 0x999999), 3.2 * side(team), 6.5, 0));
+  g.add(at(flag, 3.2 * side(team), 7.5, 0.72));
   g.userData.seats = seats;
   g.userData.facade = facade;
   return g;
 }
-const side0 = (team: number) => (team === 0 ? -1 : 1);
 
-export function tarpTex() {
+function tarpTex() {
   return canvasTex(512, 256, c => {
     c.fillStyle = "#2f7d4a"; c.fillRect(0, 0, 512, 256);
     c.strokeStyle = "rgba(255,255,255,0.18)"; c.lineWidth = 2;

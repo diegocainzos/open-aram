@@ -3,7 +3,7 @@ import { CHAMPS, MODES, RUNES, SELECT_MODES, SPELLS, TICK } from "../shared/data
 import { Player, State } from "./schema";
 import { Sim } from "./sim";
 
-const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const num = (v: any) => (Number.isFinite(v) ? v : 0);
 const str = (v: any, max = 40) => (typeof v === "string" ? v.slice(0, max) : "");
 const shuffle = <T>(a: T[]) => a.map(v => [Math.random(), v] as const).sort((x, y) => x[0] - y[0]).map(x => x[1]);
 

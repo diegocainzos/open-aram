@@ -2,7 +2,7 @@ import { Client, type Room } from "@colyseus/sdk";
 import { CHAMPS, LOADING_TIPS, MODES, RUNES, SELECT_MODES, SPELLS, champ } from "../shared/data";
 import { audio, sfx, speak } from "./audio";
 
-export const SERVER = `${location.protocol}//${location.hostname}:2567`;
+const SERVER = `${location.protocol}//${location.hostname}:2567`;
 const client = new Client(SERVER);
 const app = document.getElementById("app")!;
 let room: Room<any, any> | undefined;

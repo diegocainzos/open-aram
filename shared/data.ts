@@ -10,8 +10,6 @@ export const START_LEVEL = 3;
 export const MERCADONA_AT = 15 * 60;
 export const MODES = ["1v1", "2v2", "3v3", "4v4", "5v5"] as const;
 export const SELECT_MODES = { aram: "Pure ARAM (Random)", three: "1 of 3 Random", draft: "Free Draft" } as const;
-export type SelectMode = keyof typeof SELECT_MODES;
-export const TEAM_NAMES = ["PSOE", "PP"];
 
 export const side = (team: number) => (team === 0 ? -1 : 1);
 
@@ -42,7 +40,7 @@ export const MINIONS = {
 export type MinionKind = keyof typeof MINIONS;
 
 export type CC = "stun" | "root" | "slow" | "silence" | "taunt" | "charm" | "fear" | "blind" | "suppress" | "knockup";
-export type AbilityKind = "shot" | "aoe" | "self" | "dash" | "blink" | "target" | "cone";
+type AbilityKind = "shot" | "aoe" | "self" | "dash" | "blink" | "target" | "cone";
 
 export interface Ability {
   name: string;
@@ -258,7 +256,7 @@ export const CHAMPS: Champ[] = [
 ];
 export const champ = (id: string) => CHAMPS.find(c => c.id === id)!;
 
-export interface Item {
+interface Item {
   id: string; name: string; tier: 1 | 2 | 3; cost: number; icon: string; desc: string;
   ad?: number; ap?: number; hp?: number; as?: number; armor?: number; mr?: number; ms?: number; mana?: number;
   regen?: number; lifesteal?: number; haste?: number; tenacity?: number; passive?: string;

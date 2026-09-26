@@ -643,10 +643,12 @@ export class Sim {
       this.fx("text", { id: rt.id, text: "🪴 ¡Soy una maceta!" });
     } else if (roll === 1) {
       this.fx("text", { id: rt.id, text: "🐂 ¡TOROOO!" });
+      this.fx("bull", { id: rt.id });
       rt.dash = { tx: u.x + dx * 7, tz: u.z + dz * 7, speed: 22, hit: new Set(), stop: true, ab: { ...ab, cc: { type: "knockup", dur: 1 } } };
     } else {
       this.fx("text", { id: rt.id, text: "📦 tic... tac..." });
       const x = u.x, z = u.z;
+      this.fx("bombbox", { x, z });
       this.after(1, () => {
         for (const e of this.enemies(rt, x, z, 3)) this.hit(rt, e, ab);
         if (dist(u, { x, z }) < 3) this.damage(undefined, rt, u.maxHp * 0.05, "true");

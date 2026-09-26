@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { BRIDGE, BUSHES, CHAMPS, FOUNTAIN_X, ITEMS, RELICS, RUNES, SHOP_RADIUS, SPELLS, champ, inBush, item, side, xpFor } from "../shared/data";
 import { music, sfx, speak, startMusic, stopMusic, vol, applyVolume } from "./audio";
 import { esc, h, splash } from "./main";
-import { type Rig, bushModel, champModel, inhibModel, loadChampModels, mercadonaModel, mesh, nexusModel, pigeonModel, relicModel, shopModel, stoneTex, textSprite, toon, towerModel } from "./models";
+import { type Rig, bushModel, champModel, fxModel, inhibModel, loadChampModels, mercadonaModel, mesh, nexusModel, pigeonModel, relicModel, shopModel, stoneTex, textSprite, toon, towerModel } from "./models";
 
 const ICONS: Record<string, string[]> = {
   ezreal: ["✴️", "🔮", "⚡", "🌊", "💫"], annie: ["🔥", "🌋", "🛡️", "🧸", "🎀"], ryze: ["📜", "⛓️", "🔵", "🌀", "📘"],
@@ -346,7 +346,7 @@ function animChamp(v: View, u: any, dt: number, t: number) {
   }
   // disguises
   const plant = fx.includes("plant"), amogus = fx.includes("amogus");
-  if (plant && !v.pot) { v.pot = new THREE.Group(); v.pot.add(mesh(new THREE.CylinderGeometry(0.4, 0.3, 0.6, 10), 0xb5542a)); const leaves = mesh(new THREE.SphereGeometry(0.6, 8, 6), 0x3a9a3a); leaves.position.y = 0.8; v.pot.add(leaves); v.pot.position.y = 0.3; v.obj.add(v.pot); }
+  if (plant && !v.pot) { v.pot = fxModel("plant") ?? (() => { const g = new THREE.Group(); g.add(mesh(new THREE.CylinderGeometry(0.4, 0.3, 0.6, 10), 0xb5542a)); const leaves = mesh(new THREE.SphereGeometry(0.6, 8, 6), 0x3a9a3a); leaves.position.y = 0.8; g.add(leaves); g.position.y = 0.3; return g; })(); v.obj.add(v.pot); }
   if (v.pot) v.pot.visible = plant;
   if (amogus && !v.amogus) { v.amogus = new THREE.Group(); const b = mesh(new THREE.CapsuleGeometry(0.45, 0.5, 4, 10), u.team ? 0xd33 : 0x33d); b.position.y = 0.8; v.amogus.add(b); const visor = mesh(new THREE.BoxGeometry(0.5, 0.25, 0.2), 0x9fe8ff); visor.position.set(0, 1.05, 0.4); v.amogus.add(visor); v.obj.add(v.amogus); }
   if (v.amogus) v.amogus.visible = amogus;
@@ -444,8 +444,8 @@ function projMesh(fx: string, color: number): THREE.Object3D {
     case "baguette": { const m = mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.7, 6), 0xd9a441); m.rotation.x = Math.PI / 2; g.add(m); g.add(glow(0.1, 0x66ff44)); break; }
     case "cannonball": g.add(mesh(new THREE.SphereGeometry(0.2, 8, 6), 0x222222)); break;
     case "slipper": g.add(mesh(new THREE.BoxGeometry(0.2, 0.1, 0.4), 0x5a3a1a)); break;
-    case "phone": g.add(mesh(new THREE.BoxGeometry(0.25, 0.04, 0.45), 0x33c3ff)); break;
-    case "envelope": g.add(mesh(new THREE.BoxGeometry(0.5, 0.04, 0.35), 0xffd24a, { emissive: 0x664400 })); break;
+    case "phone": g.add(fxModel("phone") ?? mesh(new THREE.BoxGeometry(0.25, 0.04, 0.45), 0x33c3ff)); break;
+    case "envelope": g.add(fxModel("envelope") ?? mesh(new THREE.BoxGeometry(0.5, 0.04, 0.35), 0xffd24a, { emissive: 0x664400 })); break;
     case "wave": { const m = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.8, 0.5), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8 })); g.add(m); break; }
     case "beam": { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 2.5, 6), new THREE.MeshBasicMaterial({ color })); m.rotation.x = Math.PI / 2; g.add(m); break; }
     default: g.add(glow(fx === "atk" ? 0.15 : 0.3));
@@ -512,6 +512,20 @@ function focus(x: number, z: number, sec: number) { focusOverride = { x, z, unti
 function distToMe(x: number, z: number) { const v = views.get(me); return v ? Math.hypot(v.x - x, v.z - z) : 0; }
 const spatial = (x: number, z: number) => Math.max(0.1, 1 - distToMe(x, z) / 40);
 
+// Blender ability props (fx.glb): placed at (x, y, z), animated by fn for dur seconds, then removed. undefined if fx.glb failed.
+function prop(name: string, x: number, y: number, z: number, dur: number, fn?: (o: THREE.Object3D, k: number) => void) {
+  const o = fxModel(name);
+  if (!o) return;
+  o.position.set(x, y, z);
+  scene.add(o);
+  tweens.push({ t: 0, dur, fn: k => fn?.(o, k), end: () => scene.remove(o) });
+  return o;
+}
+// scale envelope for a prop living dur seconds: pops in over `grow` s, shrinks away over the last `fade` s
+const pop = (k: number, dur: number, grow = 0.15, fade = 0.3) => Math.max(0.001, Math.min(1, (k * dur) / grow, ((1 - k) * dur) / fade));
+const lob = (name: string, x: number, z: number, tx: number, tz: number, dur: number, h = 2.5) =>
+  prop(name, x, 1.4, z, dur, (o, k) => { o.position.set(x + (tx - x) * k, 1.4 * (1 - k) + 0.3 + h * 4 * k * (1 - k), z + (tz - z) * k); o.rotation.x = k * 9; });
+
 function onFx(m: any) {
   const v = m.id ? views.get(m.id) : undefined;
   if (m.champ && m.slot !== undefined) v?.rig?.anim?.shot("spell", m.slot); // doCast fx
@@ -537,8 +551,26 @@ function onFx(m: any) {
     case "trap": case "sneaker": case "oil": case "party": case "flask": {
       const { cx, cz } = aoeAt();
       ring(cx, cz, m.r ?? 2, col, m.k === "party" ? 2 : 1.2, m.delay ?? 0);
-      if (m.k === "party") { burst(cx, 1, cz, 40, [0xff3cac, 0xffe03c, 0x3cf0ff, 0xd46bff], 6, 2, 0.12, 2); sfx("gospel", vol); }
-      if (m.k === "sneaker") sprite3d("👟", cx, 1, cz, "#fff", 1.2, 0.7);
+      const d = m.delay ?? 0.5, r = m.r ?? 2;
+      if (m.k === "party") {
+        burst(cx, 1, cz, 40, [0xff3cac, 0xffe03c, 0x3cf0ff, 0xd46bff], 6, 2, 0.12, 2); sfx("gospel", vol);
+        prop("vip", cx, 0, cz, 3, (o, k) => o.scale.setScalar((r / 3.2) * pop(k, 3)));
+        for (const s of [-1, 1]) {
+          const px = cx + s * r * 0.8;
+          prop("speaker", px, 0, cz, 3, (o, k) => { o.rotation.y = -s * Math.PI / 2; o.scale.set(pop(k, 3), pop(k, 3) * (1 + 0.06 * Math.abs(Math.sin(k * 60))), pop(k, 3)); });
+        }
+      }
+      if (m.k === "sneaker") { // a giant Yeezy stomps the zone
+        const D = d + 1.2, yaw = Math.random() * Math.PI * 2;
+        if (!prop("sneaker", cx, 12, cz, D, (o, k) => { const t = k * D; o.position.y = Math.max(0, 12 * (1 - t / d)); o.rotation.y = yaw; o.scale.setScalar(r * Math.min(1, (D - t) / 0.3)); })) sprite3d("👟", cx, 1, cz, "#fff", 1.2, 0.7);
+      }
+      if (m.k === "oil" || m.k === "flask") {
+        lob(m.k === "oil" ? "oilbottle" : "flask", x, z, cx, cz, d);
+        setTimeout(() => {
+          burst(cx, 0.4, cz, 16, m.k === "oil" ? [0xfff7c0, 0xffffff] : [0xcfeaff, 0x55ff55], 4, 0.6, 0.1);
+          if (m.k === "oil") prop("puddle", cx, 0, cz, 2.2, (o, k) => o.scale.set(r * pop(k, 2.2), 1, r * pop(k, 2.2)));
+        }, d * 1000);
+      }
       sfx("slam", vol * 0.5);
       break;
     }
@@ -560,7 +592,7 @@ function onFx(m: any) {
     case "disco": {
       const { cx, cz } = aoeAt();
       ring(cx, cz, m.r, 0xffffff, 2, m.delay);
-      const ball = mesh(new THREE.IcosahedronGeometry(1.2, 1), 0xdddddd, { emissive: 0x444444 });
+      const ball = fxModel("discoball") ?? mesh(new THREE.IcosahedronGeometry(1.2, 1), 0xdddddd, { emissive: 0x444444 });
       ball.position.set(cx, 14, cz);
       scene.add(ball);
       tweens.push({ t: 0, dur: 3.5, fn: k => { ball.position.y = Math.max(4, 14 - k * 40); ball.rotation.y += 0.1; }, end: () => scene.remove(ball) });
@@ -578,6 +610,7 @@ function onFx(m: any) {
     }
     case "shirtless":
       if (v) v.shirtless = performance.now() / 1000 + 10;
+      prop("tanktop", x, 1.1, z, 1.4, (o, k) => { o.position.set(x + k * 1.5, 1.1 + k * 5, z); o.rotation.set(k * 8, k * 5, k * 3); o.scale.setScalar(pop(k, 1.4, 0.05, 0.4)); });
       ring(x, z, m.r, 0xfff1c0, 1.2);
       burst(x, 1.5, z, 20, [0xf1f1e0, 0xffffff], 8, 1.5, 0.3);
       sfx("slam", vol);
@@ -596,13 +629,19 @@ function onFx(m: any) {
       else sfx(m.k === "spin" ? "fire" : "slam", vol);
       break;
     }
-    case "smoke": for (let i = 0; i < 14; i++) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.8 + Math.random(), 8, 6), new THREE.MeshBasicMaterial({ color: 0x777777, transparent: true, opacity: 0.6, depthWrite: false })); s.position.set(x + (Math.random() - 0.5) * 3, 0.8 + Math.random(), z + (Math.random() - 0.5) * 3); scene.add(s); tweens.push({ t: 0, dur: 3, fn: k => { (s.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - k); s.scale.setScalar(1 + k); }, end: () => scene.remove(s) }); } sfx("fire", vol); break;
+    case "smoke": prop("briefcase", x, 0, z, 3, (o, k) => o.scale.setScalar(pop(k, 3))); for (let i = 0; i < 14; i++) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.8 + Math.random(), 8, 6), new THREE.MeshBasicMaterial({ color: 0x777777, transparent: true, opacity: 0.6, depthWrite: false })); s.position.set(x + (Math.random() - 0.5) * 3, 0.8 + Math.random(), z + (Math.random() - 0.5) * 3); scene.add(s); tweens.push({ t: 0, dur: 3, fn: k => { (s.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - k); s.scale.setScalar(1 + k); }, end: () => scene.remove(s) }); } sfx("fire", vol); break;
     case "blink": case "warp": burst(x, 1, z, 20, [col, 0xffffff], 5, 0.6, 0.12, 0); if (m.tx !== undefined) burst(m.tx, 1, m.tz, 20, [col, 0xffffff], 5, 0.6, 0.12, 0); sfx("pew", vol); break;
+    case "bull": { const o = fxModel("bull"); if (v && o) { v.obj.add(o); setTimeout(() => v.obj.remove(o), 450); } break; }
+    case "bombbox": prop("bombbox", x, 0, z, 1, (o, k) => o.scale.setScalar(1 + 0.15 * k * Math.abs(Math.sin(k * 30)))); break;
     case "roll": case "dash": case "moonwalk": case "god": case "shield": case "badge": case "sheet": case "swap": case "disguise": case "rune": case "fire": case "sword": case "taunt": case "snipe": case "torpedo": case "envelope": case "phone": case "bolt": case "beam": case "wave":
       if (m.k === "moonwalk") burst(x, 1, z, 30, [0xff3cac, 0xffe03c, 0x3cf0ff], 6, 1.2, 0.1);
       if (m.k === "god") { sfx("gospel", vol); if (v) sprite3d("I AM A GOD", x, 3.5, z, "#ffe04a", 2); }
       if (m.k === "shield" || m.k === "badge") ring(x, z, 1.3, col, 0.5);
-      if (m.k === "badge") sprite3d("🚔 ¡ALTO!", x, 3, z, "#ffd400");
+      if (m.k === "badge") { sprite3d("🚔 ¡ALTO!", x, 3, z, "#ffd400"); prop("badge", m.tx ?? x, 3, m.tz ?? z, 1.5, (o, k) => { o.rotation.y = k * 12; o.scale.setScalar(pop(k, 1.5)); }); }
+      if (m.k === "dash" && m.tx !== undefined) { // lightning along the dash path
+        const { dx, dz, l } = dir(), len = Math.min(l, m.range ?? l);
+        prop("bolt", x, 0, z, 0.6, (o, k) => { o.rotation.y = Math.atan2(dx, dz); o.scale.set(1.5 * (1 - k) + 0.001, 1, len / 2); });
+      }
       if (m.k === "torpedo") { sprite3d("¡¡MORTADELOOOO!!", x, 3.5, z, "#ff4040", 2); speak("¡Mortadelooo!", { pitch: 1.3, rate: 1.2 }); }
       if (m.k === "snipe" || m.k === "sword" || m.k === "fire" || m.k === "rune") { const tv = views.get(nearestView(m.tx, m.tz)); if (tv) burst(tv.x, 1.2, tv.z, 16, [col, 0xffffff], 5, 0.5); }
       sfx(["sword", "snipe"].includes(m.k) ? "hit" : m.k === "fire" ? "fire" : "pew", vol);
@@ -613,7 +652,12 @@ function onFx(m: any) {
     case "text": floatText(m.id, m.text, "txt"); break;
     case "fakedeath": {
       const u = R.state.units.get(m.id);
-      if (u) { const decoy = champModel(u.champ, champ(u.champ).color, 0).root; decoy.position.set(x, 0.3, z); decoy.rotation.x = -Math.PI / 2; scene.add(decoy); setTimeout(() => scene.remove(decoy), 3500); }
+      if (u) {
+        const r = champModel(u.champ, champ(u.champ).color, 0), decoy = r.root;
+        if (r.anim) { r.anim.state("death"); r.anim.mixer.update(2); } else { decoy.rotation.x = -Math.PI / 2; decoy.position.y = 0.3; }
+        decoy.position.x = x; decoy.position.z = z; scene.add(decoy); setTimeout(() => scene.remove(decoy), 3500);
+      }
+      if (prop("cctv", x + 1.2, 3, z, 3.5, (o, k) => { o.rotation.x = Math.min(1, k * 5) * 0.9; o.rotation.z = Math.sin(k * 50) * 0.15 * (1 - k); })) burst(x + 1.2, 3, z, 18, [0xffe04a, 0xffffff], 4, 0.5, 0.08);
       sprite3d("💀 RIP", x, 2.5, z, "#fff", 2.5);
       break;
     }

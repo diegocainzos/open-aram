@@ -87,21 +87,8 @@ const HEIGHT: Record<string, number> = { ezreal: 1.9, annie: 1.3, jhin: 1.9, cai
 const glbs = new Map<string, { scene: THREE.Object3D; clips: THREE.AnimationClip[] }>();
 export async function loadChampModels() {
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-  await Promise.all([...GLB_CHAMPS, ...Object.keys(HEIGHT)].map(id => loader.loadAsync(`/models/${id}.glb`).then(g => {
-    const meshes: THREE.Mesh[] = [];
-    g.scene.traverse(o => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
-    meshes.forEach(m => {
-      const src = m.material as THREE.MeshStandardMaterial, e = src.emissive.getHex();
-      m.castShadow = true;
-      if (src.map) { // ponytail: textured Sketchfab meshes get no inverted-hull outline (skinned + arbitrary node scale)
-        m.material = new THREE.MeshToonMaterial({ map: src.map, color: src.color, gradientMap: grad, transparent: src.transparent, alphaTest: src.alphaTest, side: src.side });
-        m.frustumCulled = false; // skinned bounds are bind-pose only
-        return;
-      }
-      const opts: THREE.MeshToonMaterialParameters = { ...(e ? { emissive: e } : {}), ...(src.opacity < 1 ? { transparent: true, opacity: src.opacity } : {}) };
-      m.material = toon(src.color.getHex(), opts);
-      if (!opts.transparent) m.add(new THREE.Mesh(m.geometry, outlineMat));
-    });
+  await Promise.all([...[...GLB_CHAMPS, ...Object.keys(HEIGHT)].map(id => loader.loadAsync(`/models/${id}.glb`).then(g => {
+    toonify(g.scene);
     let scene = g.scene;
     if (HEIGHT[id]) { // wrap as root > body > model, feet at y=0, centred, idle-posed height = HEIGHT
       const body = new THREE.Group(); body.name = "body"; body.add(g.scene);
@@ -114,7 +101,29 @@ export async function loadChampModels() {
       g.scene.position.sub(new THREE.Vector3(c.x, box.min.y, c.z));
     }
     glbs.set(id, { scene, clips: g.animations });
-  }, e => console.warn(`champ glb ${id} failed, using procedural model`, e))));
+  }, e => console.warn(`champ glb ${id} failed, using procedural model`, e)),
+  ), loader.loadAsync("/models/fx.glb").then(g => {
+    for (const o of [...g.scene.children]) { o.position.set(0, 0, 0); toonify(o); fxProps.set(o.name, o); }
+  }, e => console.warn("fx.glb failed, abilities fall back to generic effects", e))]);
+}
+// Ability props made in Blender (blender/meme_champs.py FX): sneaker, disco ball, flask... undefined if fx.glb failed.
+const fxProps = new Map<string, THREE.Object3D>();
+export const fxModel = (name: string) => fxProps.get(name)?.clone();
+function toonify(root: THREE.Object3D) {
+  const meshes: THREE.Mesh[] = [];
+  root.traverse(o => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+  for (const m of meshes) {
+    const src = m.material as THREE.MeshStandardMaterial, e = src.emissive.getHex();
+    m.castShadow = true;
+    if (src.map) { // ponytail: textured Sketchfab meshes get no inverted-hull outline (skinned + arbitrary node scale)
+      m.material = new THREE.MeshToonMaterial({ map: src.map, color: src.color, gradientMap: grad, transparent: src.transparent, alphaTest: src.alphaTest, side: src.side });
+      m.frustumCulled = false; // skinned bounds are bind-pose only
+      continue;
+    }
+    const opts: THREE.MeshToonMaterialParameters = { ...(e ? { emissive: e } : {}), ...(src.opacity < 1 ? { transparent: true, opacity: src.opacity } : {}) };
+    m.material = toon(src.color.getHex(), opts);
+    if (!opts.transparent) m.add(new THREE.Mesh(m.geometry, outlineMat));
+  }
 }
 function clipAnim(root: THREE.Object3D, clips: THREE.AnimationClip[]): Anim {
   type A = THREE.AnimationAction;

@@ -49,7 +49,7 @@ def xf(loc=(0, 0, 0), rot=(0, 0, 0), scale=(1, 1, 1)):
     R = Matrix.Rotation(rot[2], 4, "Z") @ Matrix.Rotation(rot[1], 4, "Y") @ Matrix.Rotation(rot[0], 4, "X")
     return Matrix.Translation(loc) @ R @ S
 
-def lathe(profile, segs=16):
+def lathe(profile, segs=16, caps=True):
     """Revolve [(radius, z), ...] (bottom to top) around Z. Radius 0 at an end closes it with a pole."""
     bm = bmesh.new()
     rings = []
@@ -63,8 +63,8 @@ def lathe(profile, segs=16):
             if len(a) == 1: bm.faces.new((a[0], b[i], b[j]))
             elif len(b) == 1: bm.faces.new((a[j], a[i], b[0]))
             else: bm.faces.new((a[i], a[j], b[j], b[i]))
-    if len(rings[0]) > 1: bm.faces.new(list(reversed(rings[0])))
-    if len(rings[-1]) > 1: bm.faces.new(rings[-1])
+    if caps and len(rings[0]) > 1: bm.faces.new(list(reversed(rings[0])))
+    if caps and len(rings[-1]) > 1: bm.faces.new(rings[-1])
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     return bm
 
@@ -100,6 +100,28 @@ def torus(R, r, segs=20, tube=6, arc=1.0):
             k = (j + 1) % tube
             bm.faces.new((a[j], b[j], b[k], a[k]))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return bm
+
+def prism(pts, depth):
+    """Extrude a closed 2D outline [(x, y), ...] (XY plane, may be concave) along Z, centred on z=0."""
+    bm = bmesh.new()
+    lo = [bm.verts.new((x, y, -depth / 2)) for x, y in pts]
+    hi = [bm.verts.new((x, y, depth / 2)) for x, y in pts]
+    bm.faces.new(list(reversed(lo)))
+    bm.faces.new(hi)
+    n = len(pts)
+    for i in range(n): bm.faces.new((lo[i], lo[(i + 1) % n], hi[(i + 1) % n], hi[i]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return bm
+
+def star(points, r_out, r_in):
+    return [((r_out if i % 2 == 0 else r_in) * math.sin(i * math.pi / points), (r_out if i % 2 == 0 else r_in) * math.cos(i * math.pi / points)) for i in range(points * 2)]
+
+def sphere_split(r, segs, rings, keep):
+    """UV sphere keeping only the faces whose index satisfies keep(i) (two calls = two-material mirror ball)."""
+    bm = sphere(r, segs, rings)
+    bm.faces.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[f for i, f in enumerate(bm.faces) if not keep(i)], context="FACES")
     return bm
 
 COLL = None
@@ -152,6 +174,11 @@ def arm(x, z, sleeve, skin, length=0.42, r=0.085, hand=0.095):
     part("hand", sphere(hand, 10, 8), skin, b, (0, 0, -length - 0.04))
     return b
 
+def prop(name, hand):
+    """A held prop gets its own bone at the hand, scaled ~0 except in the clips that key "%prop_<name>"."""
+    CUR.setdefault("props", []).append((name, hand))
+    return ("prop_" + name, hand[1])
+
 def face(body, z, skin, head_r=0.26, eye_y=None, nose=0.055, ears=True, eyes=True):
     CUR["sk"]["hz"] = z
     ey = -head_r * 0.88 if eye_y is None else eye_y
@@ -198,6 +225,9 @@ def torrente(body, root):
     aR = arm(0.5, 1.02, SHIRT, SKIN, r=0.1, hand=0.1)
     part("gun", box(0.05, 0.22, 0.08, 0.01), 0x2a2a2a, aR, (0, -0.1, -0.5), smooth=False)
     part("grip", box(0.05, 0.06, 0.12, 0.01), 0x4a2a14, aR, (0, 0.0, -0.57), rot=(-0.3, 0, 0), smooth=False)
+    badge = prop("badge", aR)  # W: shown to the target, faces forward once the arm is raised
+    part("badge", prism(star(6, 0.17, 0.11), 0.03), 0xe8c14c, badge, (0, 0, -0.6), emit=0x443300)
+    part("badgeshield", cyl(0.075, 0.075, 0.036, 14), 0x1a3a8a, badge, (0, 0, -0.6))
 
 def kanye(body, root):
     SKIN, HOOD, PANTS = 0x7a4a2a, 0x222222, 0x4a4a48
@@ -245,6 +275,11 @@ def epstein(body, root):
     part("book", box(0.2, 0.05, 0.26, 0.01), 0x111111, aR, (0, -0.08, -0.52))
     part("booklabel", box(0.12, 0.01, 0.04), 0xffd24a, aR, (0, -0.11, -0.47), emit=0x443300, smooth=False)
     part("tickets", box(0.16, 0.02, 0.1, 0.005), 0xffd24a, aL, (0, -0.05, -0.52), emit=0x443300)
+    case = prop("case", aL)  # E: evidence briefcase
+    part("case", box(0.42, 0.12, 0.3, 0.03), 0x5a3a1a, case, (0, 0, -0.78))
+    part("casehandle", torus(0.07, 0.018, 12, 5, 0.5), 0x2a1a0a, case, (0, 0, -0.6), rot=(math.pi / 2, 0, 0))
+    mirror(lambda s: part("clasp", box(0.05, 0.02, 0.04), 0xd4af37, case, (0.12 * s, -0.065, -0.66), emit=0x332200))
+    part("classified", box(0.3, 0.01, 0.05), 0xc0392b, case, (0, -0.065, -0.8))
     # "sheet" extra: hanging bedsheet shown during the sheet ability
     part("sheet", box(1.4, 0.05, 1.8), 0xf8f8f8, body, (0, -0.6, 1.0), alpha=0.85, smooth=False)
 
@@ -295,11 +330,29 @@ def mortadelo(body, root):
     FZ = 1.1
     face(fb, FZ, SKIN, head_r=0.25, nose=0.08)
     mirror(lambda s: part("fhair", torus(0.1, 0.01, 10, 4, 0.5), 0x111111, fb, (0.04 * s, 0, FZ + 0.27), rot=(math.pi / 2, 0, math.pi / 2 + 0.4 * s)))
-    arm(-0.42, 0.85, 0xf4f4f4, SKIN, length=0.36, r=0.08)
+    fl = arm(-0.42, 0.85, 0xf4f4f4, SKIN, length=0.36, r=0.08)
+    mallet = prop("mallet", fl)  # R: the mallet that launches Mortadelo
+    part("handle", cyl(0.025, 0.025, 0.75, 8), 0x8a5a2a, mallet, (0, 0, -0.62))
+    part("mhead", cyl(0.15, 0.15, 0.42, 14), 0xb07a3a, mallet, (0, 0, -1.02), rot=(math.pi / 2, 0, 0))
+    mirror(lambda s: part("mband", cyl(0.155, 0.155, 0.04, 14), 0x555555, mallet, (0, 0.17 * s, -1.02), rot=(math.pi / 2, 0, 0)))
     fr = arm(0.42, 0.85, 0xf4f4f4, SKIN, length=0.36, r=0.08)
     part("slipper", sphere(0.12, 10, 8), 0x7a3a1a, fr, (0, -0.1, -0.44), scale=(0.7, 1.6, 0.45))
 
 def cone_bm(r, h): return cyl(0.0, r, h, 8)
+
+def join(objs):
+    """Merge meshes that share a material into the first one (all parts have identity transforms)."""
+    o = objs[0]
+    if len(objs) > 1:
+        bm = bmesh.new()
+        for x in objs: bm.from_mesh(x.data)
+        bm.to_mesh(o.data)
+        bm.free()
+        for x in objs[1:]:
+            me = x.data
+            bpy.data.objects.remove(x)
+            bpy.data.meshes.remove(me)
+    return o
 
 # ---------------------------------------------------------------- skeleton
 EXTRAS = {"belly", "tank", "halo", "sheet"}
@@ -325,6 +378,8 @@ def skeleton(rig):
     for s, side in ((-1, "L"), (1, "R")):
         bone("arm_" + side, (sk["sx"] * s, 0, sk["sz"]), (sk["sx"] * s, 0, sk["sz"] - sk["alen"]), "spine")
         bone("leg_" + side, (sk["spread"] * s, 0, sk["hip"]), (sk["spread"] * s, 0, 0.05), "hips")
+    for name, (armb, (x, y, z)) in rig.get("props", []):
+        bone("prop_" + name, (x, y, z - sk["alen"]), (x, y - 0.1, z - sk["alen"]), armb)
     bpy.ops.object.mode_set(mode="OBJECT")
     # auto parts go to hips / spine / head by height, then merge per bone + material
     groups = {}
@@ -333,16 +388,7 @@ def skeleton(rig):
         key = (o.name, "") if o.name in EXTRAS else (b, o.data.materials[0].name)
         groups.setdefault(key, (P + b, []))[1].append(o)
     for (label, mname), (b, objs) in groups.items():
-        o = objs[0]
-        if len(objs) > 1:
-            bm = bmesh.new()
-            for x in objs: bm.from_mesh(x.data)
-            bm.to_mesh(o.data)
-            bm.free()
-            for x in objs[1:]:
-                me = x.data
-                bpy.data.objects.remove(x)
-                bpy.data.meshes.remove(me)
+        o = join(objs)
         if mname: o.name = o.data.name = f"{b}_{mname}"
         o.parent, o.parent_type, o.parent_bone = A, "BONE", b
         bpy.context.view_layer.update()
@@ -351,26 +397,27 @@ def skeleton(rig):
 
 # ---------------------------------------------------------------- animation
 # Poses are {bone: (rx, ry, rz) degrees about ARMATURE axes, relative to the parent} plus {"@bone": (dx, dy, dz)} offsets.
-# Blender front is -Y: a negative X rotation swings a hanging arm/leg forward; +Y swings the left arm outward;
-# on a raised arm, +Z brings the left hand inward (to the mouth), -Z the right one.
+# Blender front is -Y: a negative X rotation swings a hanging arm/leg forward, but tips an upright bone (spine, head, root)
+# BACK (positive X leans forward). +Y swings the left arm outward; on a raised arm +Z brings the left hand inward, -Z the right.
+# "%bone": s keys a uniform scale (prop_* bones rest at ~0 = hidden).
 FPS = 30
 
 def base_clips():
     run = lambda sgn, up: {"leg_L": (-35 * sgn, 0, 0), "leg_R": (35 * sgn, 0, 0), "arm_L": (35 * sgn, 0, 0), "arm_R": (-35 * sgn, 0, 0),
-                           "spine": (-10, 0, 8 * sgn), "head": (6, 0, -6 * sgn), "@hips": (0, 0, 0.05 * up)}
+                           "spine": (10, 0, 8 * sgn), "head": (-6, 0, -6 * sgn), "@hips": (0, 0, 0.05 * up)}
     return {
         "idle": (60, {0: {"arm_L": (0, 4, 0), "arm_R": (0, -4, 0)},
-                      30: {"spine": (-3, 0, 0), "head": (4, 0, 0), "arm_L": (-4, 8, 0), "arm_R": (-4, -8, 0), "@hips": (0, 0, -0.015)},
+                      30: {"spine": (-3, 0, 0), "head": (-4, 0, 0), "arm_L": (-4, 8, 0), "arm_R": (-4, -8, 0), "@hips": (0, 0, -0.015)},
                       60: {"arm_L": (0, 4, 0), "arm_R": (0, -4, 0)}}),
-        "run": (20, {0: run(1, 0), 5: {**run(0, 1), "spine": (-10, 0, 0)}, 10: run(-1, 0), 15: {**run(0, 1), "spine": (-10, 0, 0)}, 20: run(1, 0)}),
+        "run": (20, {0: run(1, 0), 5: {**run(0, 1), "spine": (10, 0, 0)}, 10: run(-1, 0), 15: {**run(0, 1), "spine": (10, 0, 0)}, 20: run(1, 0)}),
         "attack": (15, {0: {}, 4: {"arm_R": (55, -10, 0), "spine": (0, 0, 18), "arm_L": (-15, 0, 0)},
-                        7: {"arm_R": (-115, 0, 0), "spine": (-12, 0, -20), "head": (-6, 0, 0), "arm_L": (20, 0, 0), "@hips": (0, -0.05, -0.03)},
+                        7: {"arm_R": (-115, 0, 0), "spine": (12, 0, -20), "head": (6, 0, 0), "arm_L": (20, 0, 0), "@hips": (0, -0.05, -0.03)},
                         15: {}}),
-        "cast": (18, {0: {}, 6: {"arm_L": (-150, 25, 0), "arm_R": (-150, -25, 0), "spine": (10, 0, 0), "head": (15, 0, 0), "@hips": (0, 0, 0.1)},
-                      10: {"arm_L": (-95, 10, 0), "arm_R": (-95, -10, 0), "spine": (-10, 0, 0), "head": (-5, 0, 0), "@hips": (0, 0, 0.02)},
+        "cast": (18, {0: {}, 6: {"arm_L": (-150, 25, 0), "arm_R": (-150, -25, 0), "spine": (-10, 0, 0), "head": (-15, 0, 0), "@hips": (0, 0, 0.1)},
+                      10: {"arm_L": (-95, 10, 0), "arm_R": (-95, -10, 0), "spine": (10, 0, 0), "head": (5, 0, 0), "@hips": (0, 0, 0.02)},
                       18: {}}),
-        "death": (30, {0: {}, 6: {"spine": (-20, 0, 0), "head": (-25, 0, 0), "arm_L": (-30, 20, 0), "arm_R": (-30, -20, 0), "leg_L": (-15, 0, 0), "leg_R": (-15, 0, 0), "@root": (0, 0, -0.05)},
-                       18: {"root": (-80, 0, 0), "spine": (5, 0, 0), "head": (10, 0, 0), "arm_L": (-140, 50, 0), "arm_R": (-140, -50, 0), "@root": (0, 0, 0.2)},
+        "death": (30, {0: {}, 6: {"spine": (20, 0, 0), "head": (25, 0, 0), "arm_L": (-30, 20, 0), "arm_R": (-30, -20, 0), "leg_L": (-15, 0, 0), "leg_R": (-15, 0, 0), "@root": (0, 0, -0.05)},
+                       18: {"root": (-80, 0, 0), "spine": (-5, 0, 0), "head": (-10, 0, 0), "arm_L": (-140, 50, 0), "arm_R": (-140, -50, 0), "@root": (0, 0, 0.2)},
                        24: {"root": (-95, 0, 0), "arm_L": (-160, 70, 0), "arm_R": (-160, -70, 0), "leg_L": (-25, 0, 10), "leg_R": (-5, 0, -10), "@root": (0, 0, 0.42)},
                        30: {"root": (-90, 0, 0), "head": (0, 0, 20), "arm_L": (-165, 75, 0), "arm_R": (-165, -75, 0), "leg_L": (-20, 0, 10), "leg_R": (-8, 0, -10), "@root": (0, 0, 0.42)}}),
     }
@@ -400,42 +447,143 @@ def animate(A, prefix, clips):
                 prev[pb.name] = q
                 pb.rotation_quaternion = q
                 pb.location = B.inverted() @ Vector(pose.get("@" + n, (0, 0, 0)))
+                pb.scale = (pose.get("%" + n, 0.001 if n.startswith("prop_") else 1),) * 3
                 pb.keyframe_insert("rotation_quaternion", frame=f)
                 pb.keyframe_insert("location", frame=f)
+                pb.keyframe_insert("scale", frame=f)
         track = ad.nla_tracks.new()
         track.name = name  # same-named tracks across armatures merge into one glTF animation
         track.strips.new(name, 0, act)
         ad.action = None
-    for pb in bones: pb.rotation_quaternion, pb.location = (1, 0, 0, 0), (0, 0, 0)
+    for pb in bones: pb.rotation_quaternion, pb.location, pb.scale = (1, 0, 0, 0), (0, 0, 0), (1, 1, 1)
+
+def pivot(ax, cz, lift=0.0):
+    """Root pose rotating the whole body ax degrees about X around its centre (0, 0, cz) instead of the feet."""
+    a = math.radians(ax)
+    return {"root": (ax, 0, 0), "@root": (0, cz * math.sin(a), cz - cz * math.cos(a) + lift)}
+
+def spells(c, *clips):
+    """Ability clips spell1..spell4 (the client plays spell<slot+1> on cast)."""
+    for i, (length, keys) in enumerate(clips): c[f"spell{i + 1}"] = (length, keys)
 
 # ---------------------------------------------------------------- per-champion flavour
 def torrente_anim(c):
-    tweak(c, "idle", 30, arm_L=(-125, 0, 40), head=(18, 0, 0), spine=(4, 0, 0))  # swig of whisky
+    tweak(c, "idle", 30, arm_L=(-125, 0, 40), head=(-22, 0, 0), spine=(-6, 0, 0))  # swig of whisky
     tweak(c, "idle", 15, arm_L=(-60, 0, 15))
     tweak(c, "idle", 45, arm_L=(-60, 0, 15))
-    for f, s in ((0, 1), (10, -1), (20, 1)): tweak(c, "run", f, spine=(-6, 10 * s, 8 * s))  # waddle
+    for f, s in ((0, 1), (10, -1), (20, 1)): tweak(c, "run", f, spine=(6, 10 * s, 8 * s))  # waddle
     c["attack"] = (15, {0: {}, 3: {"arm_R": (-90, 0, 0), "head": (-5, 0, 5)}, 6: {"arm_R": (-110, 0, 0), "spine": (6, 0, 0)},
                         9: {"arm_R": (-90, 0, 0)}, 15: {}})  # aim + recoil
+    belly = {"arm_L": (-45, 0, 35), "arm_R": (-45, 0, -35)}
+    roll = lambda a, f: {**pivot(a, 0.75, 0.15), "leg_L": (-70, 0, 0), "leg_R": (-70, 0, 0), "arm_L": (-80, 0, 30), "arm_R": (-80, 0, -30), "spine": (25, 0, 0)}
+    spells(c,
+        # Q Vómito de Soberano: rear back, then heave forward twice
+        (24, {0: {}, 5: {**belly, "spine": (-12, 0, 0), "head": (-25, 0, 0), "@hips": (0, 0, 0.03)},
+              9: {**belly, "spine": (30, 0, 0), "head": (25, 0, 0), "@hips": (0, 0, -0.05)}, 13: {**belly, "spine": (18, 0, 0), "head": (10, 0, 0)},
+              16: {**belly, "spine": (32, 0, 0), "head": (28, 0, 0), "@hips": (0, 0, -0.05)}, 24: {}}),
+        # W ¡Alto a la Autoridad!: shove the badge forward, other hand on the hip
+        (21, {0: {}, 5: {"arm_R": (-95, 0, -5), "arm_L": (5, 35, 0), "spine": (-6, 0, -12), "head": (-8, 0, 0), "%prop_badge": 1},
+              15: {"arm_R": (-100, 0, -5), "arm_L": (5, 35, 0), "spine": (-6, 0, -12), "head": (-8, 0, 0), "%prop_badge": 1}, 21: {}}),
+        # E Croqueta Policial: tucked forward roll around the belly
+        (15, {0: {}, 2: roll(90, 2), 5: roll(180, 5), 8: roll(270, 8), 11: roll(360, 11), 15: {}}),
+        # R Desmadre Descamisado: grab the wifebeater, rip it off, roar
+        (30, {0: {}, 6: {"arm_L": (-70, 0, 55), "arm_R": (-70, 0, -55), "spine": (15, 0, 0), "head": (15, 0, 0), "@hips": (0, 0, -0.05)},
+              10: {"arm_L": (-165, 75, 0), "arm_R": (-165, -75, 0), "spine": (-15, 0, 0), "head": (-30, 0, 0), "@hips": (0, 0, 0.12)},
+              22: {"arm_L": (-170, 85, 0), "arm_R": (-170, -85, 0), "spine": (-12, 0, 0), "head": (-28, 0, 0), "@hips": (0, 0, 0.05)}, 30: {}}),
+    )
 
 def kanye_anim(c):
     c["idle"] = (60, {f: {"head": (-10 if i % 2 else 5, 0, 0), "arm_L": (-115, 0, 40), "arm_R": (-10 if i % 2 else 5, -4, 0),
                           "@hips": (0, 0, -0.02 if i % 2 else 0)} for i, f in enumerate(range(0, 61, 10))})
-    tweak(c, "cast", 6, arm_L=(-100, 80, 0), arm_R=(-100, -80, 0), head=(25, 0, 0))  # messiah pose
+    tweak(c, "cast", 6, arm_L=(-100, 80, 0), arm_R=(-100, -80, 0), head=(-25, 0, 0))  # messiah pose
+    sprint = {"spine": (32, 0, 0), "head": (-22, 0, 0), "arm_L": (65, 20, 0), "arm_R": (65, -20, 0), "@hips": (0, 0, -0.06)}
+    spells(c,
+        # Q Tweet Polémico: overhand phone throw
+        (15, {0: {}, 4: {"arm_R": (65, -20, 0), "spine": (-5, 0, 22), "arm_L": (-35, 0, 0)},
+              7: {"arm_R": (-135, 0, -10), "spine": (16, 0, -22), "head": (6, 0, 0), "arm_L": (25, 0, 0)}, 15: {}}),
+        # W Yeezy Drop: point at the sky, then slam the sneakers down
+        (18, {0: {}, 5: {"arm_R": (-172, -8, 0), "arm_L": (-20, 15, 0), "head": (-30, 0, 0), "spine": (-8, 0, 0)},
+              10: {"arm_R": (-55, 0, 0), "arm_L": (-40, 0, 0), "spine": (18, 0, 0), "head": (12, 0, 0), "@hips": (0, 0, -0.1)}, 18: {}}),
+        # E I Wonder Dash: ninja sprint, arms trailing
+        (12, {0: {}, 3: {**sprint, "leg_L": (-45, 0, 0), "leg_R": (30, 0, 0)}, 6: {**sprint, "leg_L": (30, 0, 0), "leg_R": (-45, 0, 0)},
+              9: {**sprint, "leg_L": (-45, 0, 0), "leg_R": (30, 0, 0)}, 12: {}}),
+        # R Episodio Maníaco: arms flung wide, face to the heavens
+        (30, {0: {}, 8: {"arm_L": (-15, 110, 0), "arm_R": (-15, -110, 0), "head": (-35, 0, 0), "spine": (-12, 0, 0), "@hips": (0, 0, 0.15)},
+              22: {"arm_L": (-25, 115, 0), "arm_R": (-25, -115, 0), "head": (-38, 0, 0), "spine": (-14, 0, 0), "@hips": (0, 0, 0.2)}, 30: {}}),
+    )
 
 def epstein_anim(c):
     tweak(c, "idle", 30, head=(4, 0, 10), arm_R=(-30, 0, 0))
+    dead = {**pivot(-90, 0, 0.42), "arm_L": (-160, 70, 0), "arm_R": (-160, -70, 0), "head": (0, 0, 25)}
+    spells(c,
+        # Q Invitación a la Isla: backhand frisbee flick of the envelope
+        (15, {0: {}, 4: {"arm_R": (-80, 0, -60), "spine": (0, 0, -25), "arm_L": (-10, 10, 0)},
+              8: {"arm_R": (-85, 0, 45), "spine": (5, 0, 22), "head": (0, 0, 8)}, 15: {}}),
+        # W Sábanas de la Prisión: hold the bedsheet up as a wall
+        (24, {0: {}, 5: {"arm_L": (-150, -10, 0), "arm_R": (-150, 10, 0), "spine": (-5, 0, 0)},
+              19: {"arm_L": (-155, -8, 0), "arm_R": (-155, 8, 0), "spine": (-6, 0, 0)}, 24: {}}),
+        # E Maletín de Pruebas: raise the briefcase, slam it on the floor
+        (18, {0: {}, 5: {"arm_L": (-45, 10, 0), "spine": (-5, 0, 0), "%prop_case": 1},
+              9: {"arm_L": (-15, 0, 0), "spine": (28, 0, 0), "head": (10, 0, 0), "leg_L": (-25, 0, 0), "leg_R": (-25, 0, 0), "@hips": (0, 0, -0.14), "%prop_case": 1},
+              14: {"arm_L": (-10, 0, 0), "spine": (20, 0, 0), "%prop_case": 1}, 18: {}}),
+        # R Epstein no se suicidó: clutch the chest, stagger, drop "dead"
+        (24, {0: {}, 4: {"arm_R": (-60, 0, -55), "arm_L": (-60, 0, 55), "spine": (15, 0, 0), "head": (22, 0, 0)},
+              10: {"arm_R": (-60, 0, -55), "arm_L": (-60, 0, 55), "spine": (-10, 0, 20), "root": (0, 0, 35), "@root": (0, 0, -0.05)},
+              18: {**dead, "root": (-95, 0, 0)}, 24: dead}),
+    )
 
 def diddy_anim(c):
     c["idle"] = (60, {f: {"hips": (0, 8 * s, 0), "spine": (0, -6 * s, 5 * s), "head": (6 if i % 2 else -4, 0, 0),
                           "arm_L": (-70 if s > 0 else -25, 10, 0), "arm_R": (-25 if s > 0 else -70, -10, 0)}
                       for i, f in enumerate(range(0, 61, 15)) for s in [1 if i % 2 else -1]})
+    roof = lambda a, up: {"arm_L": (a, 25, 0), "arm_R": (a, -25, 0), "head": (-10 if up else 8, 0, 0), "@hips": (0, 0, 0.05 if up else -0.05)}
+    slide = lambda l, r: {"leg_L": (l, 0, 0), "leg_R": (r, 0, 0), "spine": (-8, 0, 0), "arm_L": (-15, 12, 0), "arm_R": (-150, 0, -35), "head": (10, 0, 0)}
+    spells(c,
+        # Q Botella de Aceite de Bebé: underhand lob
+        (16, {0: {}, 5: {"arm_R": (45, 0, 0), "spine": (12, 0, 0), "@hips": (0, 0, -0.05)},
+              9: {"arm_R": (-125, 0, 0), "spine": (-6, 0, 0), "head": (-12, 0, 0)}, 16: {}}),
+        # W Fiesta en la Mansión: raise the roof
+        (24, {0: {}, 4: roof(-170, True), 8: roof(-135, False), 12: roof(-170, True), 16: roof(-135, False), 20: roof(-170, True), 24: {}}),
+        # E Moonwalk Evasivo: legs sliding back, hand on the hat
+        (18, {0: {}, 3: slide(28, -6), 7: slide(-6, 28), 11: slide(28, -6), 15: slide(-6, 28), 18: {}}),
+        # R The White Party: point at the sky (disco ball incoming), then ta-da
+        (30, {0: {}, 6: {"arm_R": (-175, -10, 0), "arm_L": (10, 30, 0), "head": (-35, 0, 0), "spine": (-10, 0, 0)},
+              16: {"arm_R": (-178, -8, 0), "arm_L": (10, 30, 0), "head": (-38, 0, 0), "spine": (-12, 0, 0)},
+              22: {"arm_L": (-100, 65, 0), "arm_R": (-100, -65, 0), "spine": (12, 0, 0), "@hips": (0, 0, -0.1)}, 30: {}}),
+    )
+
+def mortadelo_anim(c):
+    spin = lambda a: {"root": (0, 0, a), "arm_L": (-160, 30, 0), "arm_R": (-160, -30, 0), "@hips": (0, 0, 0.1)}
+    hop = {"@hips": (0, 0, 0.3), "leg_L": (-45, 0, 0), "leg_R": (-45, 0, 0), "arm_L": (-40, 40, 0), "arm_R": (-40, -40, 0)}
+    torpedo = {**pivot(90, 1.0, 0.25), "arm_L": (-178, 0, 8), "arm_R": (-178, 0, -8), "head": (-30, 0, 0)}
+    spells(c,
+        # Q Disfraz Inesperado: whirl into the disguise
+        (18, {0: {}, **{2 + i * 2: spin(120 * (i + 1)) for i in range(6)}, 18: {}}),
+        # W Invento del Profesor Bacterio: lob the flask
+        (16, {0: {}, 5: {"arm_R": (45, 0, 0), "spine": (10, 0, 0)}, 9: {"arm_R": (-130, 0, 0), "spine": (-8, 0, 0), "head": (-12, 0, 0)}, 16: {}}),
+        # E Cambio de Agente: both hop and swap
+        (15, {0: {}, 7: hop, 15: {}}),
+        # R ¡¡MORTADELOOOO!!: bonked into a flying torpedo, arms first
+        (27, {0: {}, 6: {"spine": (12, 0, 0), "head": (15, 0, 0), "@hips": (0, 0, -0.08)}, 9: torpedo, 24: torpedo, 27: {}}),
+    )
 
 def filemon_anim(c):
     for f, a in ((0, -110), (10, -140), (20, -110), (30, -140), (40, -110), (50, -140), (60, -110)): tweak(c, "idle", f, arm_R=(a, -20, 0))
-    c["attack"] = (15, {0: {}, 4: {"arm_R": (-170, 0, 0), "spine": (8, 0, 0)}, 7: {"arm_R": (-40, 0, 0), "spine": (-18, 0, 0), "@hips": (0, -0.08, 0)}, 15: {}})
+    c["attack"] = (15, {0: {}, 4: {"arm_R": (-170, 0, 0), "spine": (-8, 0, 0)}, 7: {"arm_R": (-40, 0, 0), "spine": (18, 0, 0), "@hips": (0, -0.08, 0)}, 15: {}})
+    swing = lambda a, sp, m=1: {"arm_L": (a, -10, 0), "arm_R": (a, 10, 0), "spine": (sp, 0, 0), "%prop_mallet": m}
+    spells(c,
+        # Q: scratches his head at the disguise
+        (18, {0: {}, 5: {"arm_L": (-150, 0, 45), "head": (0, 20, 0)}, 13: {"arm_L": (-155, 0, 40), "head": (0, -15, 0)}, 18: {}}),
+        # W: hides his eyes from the flask
+        (16, {0: {}, 4: {"arm_L": (-125, 0, 40), "arm_R": (-125, 0, -40), "spine": (10, 0, 0)}, 12: {"arm_L": (-125, 0, 40), "arm_R": (-125, 0, -40), "spine": (12, 0, 0)}, 16: {}}),
+        # E: hops too
+        (15, {0: {}, 9: {"@hips": (0, 0, 0.25), "leg_L": (-40, 0, 0), "leg_R": (-40, 0, 0), "arm_L": (-50, 40, 0), "arm_R": (-50, -40, 0)}, 15: {}}),
+        # R: two-handed mallet swing
+        (27, {0: {}, 5: swing(-170, -15), 8: swing(-55, 28), 20: swing(-50, 20), 27: {}}),
+    )
 
 CHAMPS = {"torrente": (torrente, torrente_anim), "kanye": (kanye, kanye_anim), "epstein": (epstein, epstein_anim),
-          "diddy": (diddy, diddy_anim), "mortadelo": (mortadelo, None)}
+          "diddy": (diddy, diddy_anim), "mortadelo": (mortadelo, mortadelo_anim)}
 
 def build(cid):
     global COLL
@@ -462,9 +610,172 @@ def export(cid):
                               export_cameras=False, export_lights=False)
     return path
 
+# ---------------------------------------------------------------- ability props (fx.glb)
+# One node per prop, named as the client looks it up (client/models.ts fxModel). Base on the ground or centred as noted.
+def fx_phone():  # Kanye Q projectile, lying flat, centred
+    part("case", box(0.26, 0.48, 0.035, 0.014), 0x111111)
+    part("screen", box(0.22, 0.42, 0.01), 0x33c3ff, loc=(0, 0, 0.02), emit=0x1a88cc, smooth=False)
+    for r in (0.7, -0.7): part("logo", box(0.2, 0.025, 0.01), 0xffffff, loc=(0, 0, 0.027), rot=(0, 0, r), emit=0xaaaaaa, smooth=False)
+    part("cam", cyl(0.025, 0.025, 0.03, 10), 0x333333, loc=(0.07, 0.17, -0.02))
+
+def fx_envelope():  # Epstein Q projectile, lying flat, centred
+    part("paper", box(0.52, 0.36, 0.025, 0.005), 0xffd24a, emit=0x664400)
+    part("flap", prism([(-0.26, 0.18), (0.26, 0.18), (0, -0.04)], 0.01), 0xe0b030, loc=(0, 0, 0.016), emit=0x553300)
+    part("seal", cyl(0.055, 0.06, 0.02, 14), 0xb01a1a, loc=(0, -0.03, 0.025))
+    part("isle", sphere(0.025, 8, 6), 0x3aa04a, loc=(0, -0.03, 0.037), scale=(1, 1, 0.4))
+
+def fx_sneaker():  # Kanye W: giant Yeezy dropped from the sky, 1 unit long, sole on the ground
+    part("sole", box(0.38, 1.0, 0.12, 0.05), 0xe8e2d0, loc=(0, 0, 0.06))
+    for i in range(5): part("tread", box(0.4, 0.05, 0.03), 0xc9c2ae, loc=(0, -0.4 + i * 0.2, 0.02))
+    part("upper", sphere(1, 16, 10), 0x8a857c, loc=(0, 0.06, 0.24), scale=(0.18, 0.46, 0.2))
+    part("toe", sphere(1, 12, 8), 0x8a857c, loc=(0, -0.3, 0.17), scale=(0.18, 0.22, 0.12))
+    mirror(lambda s: part("stripe", box(0.02, 0.55, 0.05), 0x5c5850, loc=(0.175 * s, 0.05, 0.24)))
+    part("collar", torus(0.12, 0.035, 16, 6), 0x3a3834, loc=(0, 0.25, 0.43), scale=(1, 1.3, 1))
+    part("heeltab", box(0.1, 0.04, 0.16, 0.015), 0xff7a1a, loc=(0, 0.5, 0.38))
+    for i in range(4): part("lace", capsule(0.02, 0.14), 0xe8e2d0, loc=(0, -0.12 + i * 0.07, 0.42 - i * 0.005), rot=(0, math.pi / 2, 0))
+
+def fx_bolt():  # Kanye E dash trail: lightning lying on the ground from the origin forward (-Y), 2 units long
+    pts = [(0.16, 0.0), (-0.14, -0.9), (0.08, -0.9), (-0.24, -2.0), (0.3, -0.72), (0.07, -0.72), (0.36, 0.0)]
+    part("bolt", prism([(x - 0.11, y) for x, y in pts], 0.05), 0xffe04a, loc=(0, 0, 0.05), emit=0xffcc00, smooth=False)
+
+def fx_briefcase():  # Epstein E: the evidence case left inside the smoke, on the ground
+    part("case", box(0.62, 0.18, 0.44, 0.03), 0x5a3a1a, loc=(0, 0, 0.22))
+    part("handle", torus(0.09, 0.022, 12, 5, 0.5), 0x2a1a0a, loc=(0, 0, 0.44), rot=(math.pi / 2, 0, 0))
+    mirror(lambda s: part("clasp", box(0.06, 0.02, 0.05), 0xd4af37, loc=(0.18 * s, -0.095, 0.4), emit=0x332200))
+    part("classified", box(0.42, 0.01, 0.07), 0xc0392b, loc=(0, -0.095, 0.2))
+    for i, (x, r) in enumerate(((-0.15, -0.3), (0.05, 0.15), (0.2, 0.4))):
+        part("paper", box(0.2, 0.01, 0.26), 0xf8f8f0, loc=(x, 0.02, 0.5 + i * 0.02), rot=(0.2, r, 0), smooth=False)
+
+def fx_cctv():  # Epstein R: the prison camera that "malfunctioned", centred, looking forward
+    part("body", box(0.22, 0.46, 0.2, 0.025), 0xd8d8d0)
+    part("hood", box(0.26, 0.5, 0.03, 0.01), 0x9a9a92, loc=(0, -0.02, 0.115))
+    part("lens", cyl(0.07, 0.08, 0.06, 14), 0x111111, loc=(0, -0.25, 0), rot=(math.pi / 2, 0, 0))
+    part("led", sphere(0.025, 8, 6), 0xff2020, loc=(0.07, -0.235, 0.06), emit=0xff0000)
+    part("arm", box(0.05, 0.3, 0.05), 0x777770, loc=(0, 0.35, 0.12), rot=(-0.5, 0, 0))
+    part("plate", box(0.2, 0.03, 0.2), 0x777770, loc=(0, 0.48, 0.24))
+
+def fx_tanktop():  # Torrente R: the ripped wifebeater flying off, centred
+    part("tank", lathe([(0.36, -0.3), (0.42, -0.05), (0.38, 0.15), (0.3, 0.28)], 18, caps=False), 0xf1f1e0, scale=(1, 0.7, 1))
+    mirror(lambda s: part("strap", box(0.07, 0.04, 0.22), 0xf1f1e0, loc=(0.16 * s, 0, 0.36)))
+    for x, z in ((0.1, 0.05), (-0.2, -0.12), (0.22, -0.2)): part("stain", sphere(0.07, 8, 6), 0xc9a94a, loc=(x, -0.28, z), scale=(1, 0.3, 0.8))
+    part("rip", prism([(0, 0), (0.08, -0.25), (-0.06, -0.12), (0.03, -0.4), (-0.12, -0.1)], 0.02), 0x5a6b4a, loc=(0.05, -0.29, 0.15), rot=(math.pi / 2, 0, 0))
+
+def fx_oilbottle():  # Diddy Q: thrown bottle, centred
+    part("bottle", lathe([(0, -0.22), (0.11, -0.22), (0.12, 0.08), (0.06, 0.16), (0.04, 0.22), (0, 0.22)], 14), 0xfff7c0, alpha=0.8)
+    part("label", cyl(0.123, 0.123, 0.12, 14), 0xff9ec8, loc=(0, 0, -0.07))
+    part("cap", cyl(0.045, 0.045, 0.07, 10), 0x3aa0ff, loc=(0, 0, 0.26))
+
+def fx_puddle():  # Diddy Q: slippery puddle, radius ~1, flat on the ground (client scales to the ability radius)
+    blob = [((1 + 0.12 * math.sin(3 * a) + 0.07 * math.sin(7 * a + 1)) * math.cos(a), (1 + 0.12 * math.sin(3 * a) + 0.07 * math.sin(7 * a + 1)) * math.sin(a)) for a in (i / 40 * TAU for i in range(40))]
+    part("oil", prism(blob, 0.02), 0xffe890, loc=(0, 0, 0.02), alpha=0.75, smooth=False)
+    for x, y, r in ((-0.3, 0.2, 0.18), (0.35, -0.25, 0.12), (0.1, 0.45, 0.08)): part("glint", cyl(r, r, 0.01, 12), 0xffffff, loc=(x, y, 0.035), alpha=0.8)
+
+def fx_speaker():  # Diddy W: speaker stack on the ground
+    part("cab", box(0.72, 0.56, 1.5, 0.03), 0x151515, loc=(0, 0, 0.75))
+    for z, r in ((0.42, 0.24), (0.95, 0.24), (1.32, 0.09)):
+        part("cone", cyl(r, r * 0.6, 0.05, 18), 0x444444, loc=(0, -0.29, z), rot=(math.pi / 2, 0, 0))
+        part("dust", cyl(r * 0.3, r * 0.3, 0.06, 12), 0x222222, loc=(0, -0.3, z), rot=(math.pi / 2, 0, 0))
+    part("led", box(0.6, 0.02, 0.04), 0xd46bff, loc=(0, -0.29, 1.47), emit=0xa030ff, smooth=False)
+
+def fx_vip():  # Diddy W: VIP stanchions + velvet rope around a radius-3.2 zone (the party radius)
+    R, n = 3.2, 10
+    pts = [(R * math.cos(i / n * TAU), R * math.sin(i / n * TAU)) for i in range(n)]
+    for x, y in pts:
+        part("post", cyl(0.035, 0.04, 0.9, 10), 0xd4af37, loc=(x, y, 0.45), emit=0x332200)
+        part("knob", sphere(0.06, 10, 8), 0xd4af37, loc=(x, y, 0.92), emit=0x332200)
+        part("base", cyl(0.14, 0.14, 0.04, 14), 0xd4af37, loc=(x, y, 0.02), emit=0x332200)
+    for i in range(n):
+        (x0, y0), (x1, y1) = pts[i], pts[(i + 1) % n]
+        segs = 6
+        for j in range(segs):
+            t0, t1 = j / segs, (j + 1) / segs
+            p0 = Vector((x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0, 0.85 - 0.25 * math.sin(math.pi * t0)))
+            p1 = Vector((x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1, 0.85 - 0.25 * math.sin(math.pi * t1)))
+            d = p1 - p0
+            bm = cyl(0.03, 0.03, d.length + 0.01, 8)
+            bm.transform(Matrix.Translation((p0 + p1) / 2) @ d.to_track_quat("Z", "Y").to_matrix().to_4x4())
+            part("rope", bm, 0xa01030)
+
+def fx_discoball():  # Diddy R: mirror ball, centred, hanging chain going up
+    part("ball", sphere_split(1.1, 24, 16, lambda i: i % 5 != 0), 0xd8d8e8, emit=0x404050, smooth=False)
+    part("tiles", sphere_split(1.1, 24, 16, lambda i: i % 5 == 0), 0xff3cac, emit=0xcc2080, smooth=False)
+    part("cap", cyl(0.2, 0.12, 0.2, 12), 0x888888, loc=(0, 0, 1.15))
+    part("chain", cyl(0.03, 0.03, 4, 6), 0x888888, loc=(0, 0, 3.2))
+
+def fx_plant():  # Mortadelo Q: the potted-plant disguise (with Mortadelo peeking out), on the ground
+    part("pot", lathe([(0, 0), (0.3, 0), (0.4, 0.5), (0, 0.5)], 16), 0xb5542a)
+    part("rim", torus(0.42, 0.05, 20, 6), 0xa04a22, loc=(0, 0, 0.52))
+    part("soil", cyl(0.4, 0.4, 0.04, 16), 0x3a2410, loc=(0, 0, 0.52))
+    for x, y, z, r in ((0, 0, 1.05, 0.5), (0.35, 0.1, 0.9, 0.35), (-0.35, 0.05, 0.92, 0.38), (0.1, 0.25, 1.4, 0.35), (-0.15, -0.1, 1.45, 0.3)):
+        part("leaves", sphere(r, 12, 8), 0x3a9a3a, loc=(x, y, z))
+    for x, z in ((0.2, 1.62), (-0.3, 1.3), (0.4, 1.2)): part("flower", sphere(0.07, 8, 6), 0xff5a8a, loc=(x, -0.2, z))
+    mirror(lambda s: part("glass", torus(0.075, 0.015, 14, 5), 0x111111, loc=(0.1 * s, -0.47, 1.12), rot=(math.pi / 2, 0, 0)))
+    mirror(lambda s: part("eye", sphere(0.035, 8, 6), 0x111111, loc=(0.1 * s, -0.46, 1.12)))
+    part("nose", lathe([(0.06, 0), (0.065, 0.18), (0.055, 0.3), (0, 0.33)], 10), 0xf1c27d, loc=(0, -0.45, 1.05), rot=(math.pi / 2 + 0.3, 0, 0))
+
+def fx_bull():  # Mortadelo Q: cheap bull costume he wears for the charge, on the ground, facing forward
+    DARK = 0x3a2418
+    part("body", sphere(1, 16, 10), DARK, loc=(0, 0.1, 1.0), scale=(0.5, 0.9, 0.48))
+    part("head", sphere(1, 14, 10), DARK, loc=(0, -0.85, 1.2), scale=(0.3, 0.36, 0.3))
+    part("snout", sphere(1, 12, 8), 0xd89a8a, loc=(0, -1.13, 1.1), scale=(0.22, 0.14, 0.16))
+    part("ring", torus(0.07, 0.015, 12, 5), 0xd4af37, loc=(0, -1.26, 1.03), rot=(math.pi / 2, 0, 0), emit=0x332200)
+    mirror(lambda s: part("horn", cyl(0.06, 0.0, 0.4, 10), 0xf1e6c8, loc=(0.3 * s, -0.85, 1.45), rot=(0, s, 0)))
+    mirror(lambda s: part("glass", torus(0.07, 0.014, 14, 5), 0x111111, loc=(0.11 * s, -1.08, 1.3), rot=(math.pi / 2, 0, 0)))
+    for x, y in ((-0.28, -0.5), (0.28, -0.5), (-0.28, 0.6), (0.28, 0.6)):
+        part("leg", cyl(0.09, 0.08, 0.7, 10), DARK, loc=(x, y, 0.35))
+        part("hoof", cyl(0.1, 0.1, 0.08, 10), 0x111111, loc=(x, y, 0.04))
+    part("tail", cyl(0.02, 0.02, 0.6, 6), DARK, loc=(0, 1.0, 0.8), rot=(0.5, 0, 0))
+    part("zip", box(0.03, 1.4, 0.03), 0xd4af37, loc=(0, 0.1, 1.47), emit=0x332200)  # it's a costume
+
+def fx_bombbox():  # Mortadelo Q: T.I.A. bomb box that goes off after 1s, on the ground
+    part("box", box(0.7, 0.7, 0.6, 0.02), 0xc8a060, loc=(0, 0, 0.3))
+    part("tape", box(0.72, 0.14, 0.61), 0xa88a50, loc=(0, 0, 0.3))
+    part("label", box(0.36, 0.01, 0.16), 0xd33b2c, loc=(0, -0.355, 0.32))
+    for x in (-0.12, 0, 0.12): part("tnt", cyl(0.055, 0.055, 0.45, 10), 0xc0202a, loc=(x, 0, 0.66), rot=(math.pi / 2, 0, 0))
+    part("fuse", torus(0.15, 0.012, 12, 4, 0.5), 0x222222, loc=(0, 0.1, 0.72), rot=(0, math.pi / 2, 0))
+    part("spark", sphere(0.06, 8, 6), 0xffa020, loc=(0, 0.1, 0.87), emit=0xff7000)
+
+def fx_flask():  # Mortadelo W: Professor Bacterio's flask, centred
+    part("glass", lathe([(0, -0.2), (0.12, -0.18), (0.19, -0.05), (0.15, 0.08), (0.06, 0.13), (0.055, 0.32), (0.07, 0.34), (0, 0.34)], 16), 0xcfeaff, alpha=0.4)
+    part("brew", lathe([(0, -0.18), (0.11, -0.16), (0.17, -0.05), (0.14, 0.04), (0, 0.04)], 16), 0x55ff55, emit=0x22aa22)
+    part("cork", cyl(0.05, 0.045, 0.08, 10), 0x9a6a3a, loc=(0, 0, 0.38))
+    for x, z in ((0.05, -0.05), (-0.06, -0.1)): part("bubble", sphere(0.025, 6, 4), 0xccffcc, loc=(x, -0.14, z), emit=0x66aa66)
+
+def fx_badge():  # Torrente W: big police badge floating over the taunted target, facing forward, centred
+    part("star", prism(star(6, 0.5, 0.32), 0.06), 0xe8c14c, rot=(math.pi / 2, 0, 0), emit=0x443300)
+    part("shield", cyl(0.22, 0.22, 0.08, 20), 0x1a3a8a, rot=(math.pi / 2, 0, 0))
+    part("crest", prism(star(5, 0.12, 0.05), 0.09), 0xe8c14c, rot=(math.pi / 2, 0, 0), emit=0x443300)
+
+FX = {"phone": fx_phone, "envelope": fx_envelope, "sneaker": fx_sneaker, "bolt": fx_bolt, "briefcase": fx_briefcase, "cctv": fx_cctv,
+      "tanktop": fx_tanktop, "oilbottle": fx_oilbottle, "puddle": fx_puddle, "speaker": fx_speaker, "vip": fx_vip, "discoball": fx_discoball,
+      "plant": fx_plant, "bull": fx_bull, "bombbox": fx_bombbox, "flask": fx_flask, "badge": fx_badge}
+
+def build_fx():
+    global COLL
+    clear()
+    RIGS.clear()
+    COLL = bpy.context.scene.collection
+    for i, (name, fn) in enumerate(FX.items()):
+        root = node(name)
+        new_rig(name, "", None)
+        fn()
+        by_mat = {}
+        for o, _, _ in CUR["parts"]: by_mat.setdefault(o.data.materials[0].name, []).append(o)
+        for mname, objs in by_mat.items():
+            o = join(objs)
+            o.name = o.data.name = f"{name}_{mname}"
+            o.parent = root
+        root.location.x = i * 4  # spread out for Blender previews; the client resets the position
+    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, "fx.glb")
+    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", export_yup=True, export_apply=True, export_materials="EXPORT",
+                              export_animations=False, export_cameras=False, export_lights=False)
+    return path
+
 def main(ids=None):
     for cid in ids or CHAMPS:
         build(cid)
         print("exported", export(cid))
+    if not ids: print("exported", build_fx())
 
 if __name__ == "__main__": main()

@@ -108,9 +108,9 @@ export class Sim {
     return !rt.u.dead && rt.fakeUntil <= this.now && rt.siestaUntil <= this.now && rt.tpT <= 0 &&
       !rt.ccs.some(c => ["stun", "root", "suppress", "knockup", "taunt", "charm", "fear"].includes(c.type));
   }
-  canAct(rt: RT) {
+  canAct(rt: RT, taunted = false) {
     return !rt.u.dead && rt.fakeUntil <= this.now && rt.siestaUntil <= this.now && rt.tpT <= 0 &&
-      !rt.ccs.some(c => ["stun", "suppress", "knockup", "taunt", "charm", "fear"].includes(c.type));
+      !rt.ccs.some(c => ["stun", "suppress", "knockup", "charm", "fear"].includes(c.type) || c.type === "taunt" && !taunted);
   }
   vulnerable(rt: RT) {
     if (!this.isStruct(rt)) return rt.u.kind !== "mercadona";
@@ -202,7 +202,7 @@ export class Sim {
     if (this.s.hacendado[u.team] > this.now) { maxHp *= 1.15; ad *= 1.15; ap *= 1.15; armor *= 1.15; mr *= 1.15; ms *= 1.15; }
     const slow = Math.max(0, ...rt.ccs.filter(x => x.type === "slow").map(x => x.amt));
     ms *= 1 - slow;
-    if (maxHp > oldMax && oldMax > 1) u.hp += maxHp - oldMax;
+    if (maxHp > oldMax && oldMax > 1 && !u.dead) u.hp += maxHp - oldMax;
     put(u, "maxHp", Math.round(maxHp));
     put(u, "hp", Math.min(u.hp, u.maxHp));
     put(u, "maxMana", maxMana);
@@ -214,6 +214,7 @@ export class Sim {
     put(u, "ms", Math.max(1, Math.round(ms * 100) / 100));
     put(u, "range", range);
   }
+  manaCost(rt: RT, ab: Ability) { return ab.mana * (rt.c?.id === "kanye" && !rt.twitter ? 0.7 : 1); }
   haste(rt: RT) { return rt.u.items.reduce((a, i) => a + (item(i)?.haste ?? 0), 0); }
 
   // ---------------------------------------------------------------- damage
@@ -325,7 +326,7 @@ export class Sim {
     u.deaths++;
     u.respawn = 5 + u.level * 1.3;
     u.recall = 0;
-    t.ccs = []; t.dots = []; t.buffs = []; t.shields = []; t.mt = undefined; t.target = undefined; t.recallT = 0; t.tpT = 0;
+    t.ccs = []; t.dots = []; t.buffs = []; t.shields = []; t.mt = undefined; t.target = undefined; t.pending = undefined; t.recallT = 0; t.tpT = 0;
     const assists = [...t.assist].filter(([id, at]) => at > this.now - 10 && id !== killer?.id).map(([id]) => this.rt.get(id)!).filter(Boolean);
     t.assist.clear();
     let multi = 0;
@@ -357,9 +358,7 @@ export class Sim {
     while (u.level < 18 && u.xp >= xpFor(u.level)) {
       u.xp -= xpFor(u.level);
       u.level++;
-      const before = u.maxHp;
       this.stats(rt);
-      u.hp = Math.min(u.maxHp, u.hp + (u.maxHp - before));
       this.fx("levelup", { id: rt.id });
     }
   }
@@ -433,7 +432,7 @@ export class Sim {
   }
   cmdSell(id: string, idx: number) {
     const rt = this.rt.get(id);
-    if (!rt || !rt.c || !(idx >= 0 && idx < rt.u.items.length)) return;
+    if (!rt || !rt.c || !Number.isInteger(idx) || !(idx >= 0 && idx < rt.u.items.length)) return;
     if (!rt.u.dead && dist(rt.u, this.fountain(rt.u.team)) > SHOP_RADIUS + 3) return;
     rt.u.gold += Math.round((item(rt.u.items[idx])?.cost ?? 0) * 0.7);
     rt.u.items.splice(idx, 1);
@@ -453,11 +452,11 @@ export class Sim {
 
   cmdCast(id: string, slot: number, x: number, z: number, tid?: string) {
     const rt = this.rt.get(id);
-    if (!rt?.c || rt.u.dead || !(slot >= 0 && slot < 4)) return;
+    if (!rt?.c || rt.u.dead || !Number.isInteger(slot) || !(slot >= 0 && slot < 4)) return;
     const ab = rt.c.abilities[slot];
     if (slot === 3 && rt.u.level < 6) return;
     if (!this.canAct(rt) || this.has(rt, "silence") || rt.dash) return;
-    if (rt.u.cds[slot] > 0 || rt.u.mana < ab.mana) return;
+    if (rt.u.cds[slot] > 0 || rt.u.mana < this.manaCost(rt, ab)) return;
     if (ab.kind === "target") {
       const t = this.pickTarget(rt, x, z, tid, ab.range);
       if (!t) return;
@@ -471,7 +470,7 @@ export class Sim {
     const c = rt.c!, u = rt.u;
     let ab = c.abilities[slot];
     u.cds[slot] = ab.cd * (1 - this.haste(rt));
-    u.mana -= ab.mana * (c.id === "kanye" && !rt.twitter ? 0.7 : 1);
+    u.mana -= this.manaCost(rt, ab);
     rt.pending = undefined;
     rt.recallT = 0;
     rt.amogus = false;
@@ -564,15 +563,15 @@ export class Sim {
         break;
       }
       case "dash": {
-        let tdx = dx, tdz = dz;
-        if (ab.special === "recoil") { tdx = -dx; tdz = -dz; }
-        const d = ab.special === "torpedo" || ab.special === "stop" ? ab.range : Math.min(len, ab.range);
+        const recoil = ab.special === "recoil"; // hop back 3.5, the net is fired below
+        const tdx = recoil ? -dx : dx, tdz = recoil ? -dz : dz;
+        const d = recoil ? 3.5 : ab.special === "torpedo" || ab.special === "stop" ? ab.range : Math.min(len, ab.range);
         if (ab.special === "moonwalk") { rt.ccImmune = this.now + 0.5; for (const e of this.enemies(rt, u.x, u.z, ab.radius ?? 2)) if (e.c && e.u.range < 3) this.addCC(e, "blind", 1.5, rt); }
         if (ab.special === "spellshield") rt.spellshield = this.now + 3;
-        const land = ab.special === "land" || ab.special === "torpedo";
+        const land = ab.special === "landaoe" || ab.special === "torpedo";
         const stop = ab.special === "stop" || ab.special === "torpedo" || c.id === "rammus" && slot === 0;
         rt.dash = {
-          tx: u.x + tdx * d, tz: u.z + tdz * d, speed: ab.special === "torpedo" ? 32 : 20, hit: new Set(), ab: ab.cc?.type === "blind" ? undefined : ab, stop, land,
+          tx: u.x + tdx * d, tz: u.z + tdz * d, speed: ab.special === "torpedo" ? 32 : 20, hit: new Set(), ab: recoil || ab.cc?.type === "blind" ? undefined : ab, stop, land,
           onEnd: land ? () => {
             for (const e of this.enemies(rt, u.x, u.z, ab.radius ?? 2)) this.hit(rt, e, ab);
             this.fx(ab.special === "torpedo" ? "boom" : "slam", { x: u.x, z: u.z, r: ab.radius, color: ab.color });
@@ -817,7 +816,6 @@ export class Sim {
       if (rt.c.id === "jhin" && rt.hits % 4 === 0) { dmg *= 1.75; crit = true; }
       if (rt.c.id === "caitlyn" && rt.hits % 6 === 0) { dmg *= 1.6; crit = true; this.fx("text", { id: rt.id, text: "🎯 HEADSHOT" }); }
       if (rt.amogus) { dmg *= 1.75; crit = true; rt.amogus = false; rt.stealthUntil = 0; }
-      if (rt.u.items.includes("jamon") && t.c) this.after(0.05, () => this.damage(rt, t, t.u.maxHp * 0.03, "true"));
       rt.stealthUntil = Math.min(rt.stealthUntil, this.now);
     }
     if (u.kind === "tower") dmg = t.c ? 220 + this.now / 6 : t.u.maxHp * 0.45;
@@ -828,6 +826,7 @@ export class Sim {
       if (t.u.dead) return;
       if (t.u.items.includes("muleta") && ++t.dodge % 8 === 0) { this.fx("text", { id: t.id, text: "🟥 ¡OLÉ!" }); return; }
       this.damage(rt, t, dmg, "phys", { attack: true, crit });
+      if (t.c && u.items.includes("jamon")) this.damage(rt, t, t.u.maxHp * 0.03, "true");
       if (emp) this.hit(rt, t, emp);
       if (rt.c) this.onHitPassives(rt, t, false);
     };
@@ -869,7 +868,7 @@ export class Sim {
     rt.shields = rt.shields.filter(s => s.until > now);
     for (const d of rt.dots) {
       if (d.until <= now || rt.u.dead) continue;
-      this.damage(this.rt.get(d.src), rt, d.dps * dt, d.dtype === "phys" ? "magic" : d.dtype);
+      this.damage(this.rt.get(d.src), rt, d.dps * dt, d.dtype);
     }
     rt.dots = rt.dots.filter(d => d.until > now);
     const u = rt.u;
@@ -975,12 +974,12 @@ export class Sim {
     if (rt.pending && this.canAct(rt)) {
       const t = this.rt.get(rt.pending.tid ?? "");
       const ab = rt.c!.abilities[rt.pending.slot];
-      if (!t || !this.targetableBy(t, rt)) rt.pending = undefined;
+      if (!t || !this.targetableBy(t, rt) || this.has(rt, "silence")) rt.pending = undefined;
       else if (dist(t.u, u) <= ab.range + rt.r + t.r) this.doCast(rt, rt.pending.slot, t.u.x, t.u.z, t);
       else if (this.canMove(rt)) this.stepToward(rt, t.u.x, t.u.z, dt);
       return;
     }
-    if (!this.canAct(rt) && !this.has(rt, "taunt")) return;
+    if (!this.canAct(rt, true)) return; // a taunt still lets you (forcibly) attack
     if (rt.target && this.attackLogic(rt, dt)) return;
     if (rt.mt && this.canMove(rt)) if (this.stepToward(rt, rt.mt.x, rt.mt.z, dt)) rt.mt = undefined;
   }

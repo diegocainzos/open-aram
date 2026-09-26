@@ -728,8 +728,8 @@ function onKill(m: any) {
     slowmoUntil = performance.now() / 1000 + 2.5;
     document.getElementById("gl")!.classList.add("dead");
     sfx("wasted");
-    const w = h(`<div class="death"><div class="wasted">WASTED</div></div>`);
-    document.body.append(w);
+    const w = h(`<div class="death nopoint"><div class="wasted">WASTED</div></div>`);
+    hud.score.before(w); // inside the HUD, under the Tab scoreboard
     setTimeout(() => w.remove(), 3500);
   }
 }

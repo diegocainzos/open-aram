@@ -5,6 +5,7 @@ import { Sim } from "./sim";
 
 const num = (v: any) => (Number.isFinite(v) ? v : 0);
 const str = (v: any, max = 40) => (typeof v === "string" ? v.slice(0, max) : "");
+const own = (o: object, k: any) => typeof k === "string" && Object.hasOwn(o, k);
 const shuffle = <T>(a: T[]) => a.map(v => [Math.random(), v] as const).sort((x, y) => x[0] - y[0]).map(x => x[1]);
 
 export class GameRoom extends Room<{ state: State }> {
@@ -21,7 +22,7 @@ export class GameRoom extends Room<{ state: State }> {
     Object.assign(this.state, {
       roomName: str(o.roomName) || "Sala sin nombre",
       mode,
-      selectMode: o.selectMode in SELECT_MODES ? o.selectMode : "aram",
+      selectMode: own(SELECT_MODES, o.selectMode) ? o.selectMode : "aram",
       banter: o.banter !== false,
       mercadona: o.mercadona !== false,
     });
@@ -42,10 +43,10 @@ export class GameRoom extends Room<{ state: State }> {
     });
     this.onMessage("loadout", (c, m) => {
       const p = player(c);
-      if (!p || this.state.phase !== "lobby") return;
-      if (m.spellD in SPELLS && m.spellD !== p.spellF) p.spellD = m.spellD;
-      if (m.spellF in SPELLS && m.spellF !== p.spellD) p.spellF = m.spellF;
-      if (m.rune in RUNES) p.rune = m.rune;
+      if (!p || !m || this.state.phase !== "lobby") return;
+      if (own(SPELLS, m.spellD) && m.spellD !== p.spellF) p.spellD = m.spellD;
+      if (own(SPELLS, m.spellF) && m.spellF !== p.spellD) p.spellF = m.spellF;
+      if (own(RUNES, m.rune)) p.rune = m.rune;
     });
     this.onMessage("start", c => {
       const ps = [...this.state.players.values()];
@@ -136,7 +137,7 @@ export class GameRoom extends Room<{ state: State }> {
     const pool = shuffle(CHAMPS.map(c => c.id));
     for (const p of this.state.players.values()) {
       if (this.state.selectMode === "aram") { p.champ = pool.pop()!; p.rerolls = 1; }
-      if (this.state.selectMode === "three") p.options.push(...pool.splice(0, 3));
+      if (this.state.selectMode === "three") p.options.push(...(pool.length >= 3 ? pool.splice(0, 3) : shuffle(CHAMPS.map(c => c.id)).slice(0, 3))); // 15 champs: unique for 5 players, then overlap
     }
     this.syncMeta();
   }

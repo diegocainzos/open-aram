@@ -138,7 +138,7 @@ export const CHAMPS: Champ[] = [
     abilities: [
       { name: "Piltover Peacemaker", desc: "Long piercing line shot.", kind: "shot", cd: 8, mana: 50, range: 13, dmg: 140, ratio: 1.3, dtype: "phys", radius: 0.7, speed: 40, pierce: true, fx: "beam", color: Y },
       { name: "Yordle Snap Trap", desc: "Trap that roots.", kind: "aoe", cd: 12, mana: 20, range: 8, dmg: 60, ratio: 0.4, dtype: "phys", radius: 1.4, delay: 0.8, cc: { type: "root", dur: 1.5 }, fx: "trap", color: Y },
-      { name: "90 Caliber Net", desc: "Net that slows; recoil backwards.", kind: "shot", cd: 14, mana: 70, range: 8, dmg: 90, ratio: 0.8, dtype: "magic", radius: 0.7, speed: 32, cc: { type: "slow", dur: 1, amt: 0.5 }, fx: "bolt", color: W, special: "recoil" },
+      { name: "90 Caliber Net", desc: "Net that slows; recoil backwards.", kind: "dash", cd: 14, mana: 70, range: 8, dmg: 90, ratio: 0.8, dtype: "magic", radius: 0.7, speed: 32, cc: { type: "slow", dur: 1, amt: 0.5 }, fx: "bolt", color: W, special: "recoil" },
       { name: "Ace in the Hole", desc: "Targeted sniper shot.", kind: "target", cd: 80, mana: 100, range: 30, dmg: 400, ratio: 2.0, dtype: "phys", fx: "snipe", color: Y },
     ],
   },
@@ -250,7 +250,7 @@ export const CHAMPS: Champ[] = [
       { name: "Disfraz Inesperado", desc: "Random disguise: Potted Plant (stealth), Charging Bull (knockup dash) or Bomb Box (AoE, hurts you a bit).", kind: "self", cd: 9, mana: 50, range: 7, dmg: 160, ratio: 0.8, dtype: "magic", radius: 3, fx: "disguise", color: Y, special: "disguise" },
       { name: "Invento del Profesor Bacterio", desc: "Flask: 50% heal allies 25% max HP, 50% tear gas reversing everyone's controls.", kind: "aoe", cd: 16, mana: 70, range: 7, radius: 3, delay: 0.5, fx: "flask", color: G, special: "bacterio" },
       { name: "Cambio de Agente", desc: "Swap leader: Mortadelo (melee, fast, armored) ↔ Filemón (ranged revolvers).", kind: "self", cd: 3, mana: 0, range: 0, fx: "swap", color: W, special: "swap" },
-      { name: "¡¡MORTADELOOOO!!", desc: "Filemón mallets Mortadelo into a torpedo. Stuns 1.8s on impact. ¡¡ZASCA!!", kind: "shot", cd: 90, mana: 100, range: 25, dmg: 280, ratio: 0.8, dtype: "magic", radius: 1.2, speed: 30, cc: { type: "stun", dur: 1.8 }, fx: "torpedo", color: 0xd33b2c, special: "torpedo" },
+      { name: "¡¡MORTADELOOOO!!", desc: "Filemón mallets Mortadelo into a torpedo. Stuns 1.8s on impact. ¡¡ZASCA!!", kind: "dash", cd: 90, mana: 100, range: 25, dmg: 280, ratio: 0.8, dtype: "magic", radius: 1.2, speed: 30, cc: { type: "stun", dur: 1.8 }, fx: "torpedo", color: 0xd33b2c, special: "torpedo" },
     ],
   },
 ];

@@ -1,3 +1,7 @@
 node_modules
 dist
 .playwright-mcp
+blender/src/
+*.blend1
+__pycache__/
+nohup.out

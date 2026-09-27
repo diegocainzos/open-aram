@@ -20,7 +20,8 @@ npm run build        # vite build; the >500 kB chunk warning is expected (three.
 ```
 
 Definition of done for any change: `npm run typecheck` clean **and** `npm test` prints `sim ok`. For visible
-client changes, also run the two-tab E2E (`e2e.js`, see below) or at least load the game in a browser.
+client changes, also run the two-tab E2E (`e2e.js`, see below) or at least load the game in a browser, and pass
+the **Art quality standards** checklist (below) by code inspection.
 
 ## File map — where to put things
 
@@ -110,11 +111,53 @@ Create options flow `client/main.ts createModal()` → `client.create("aram", op
 - Spanish for player-facing strings (announcer, HUD labels, chat system messages); English for code and comments.
 - Mark deliberate shortcuts with a `ponytail:` comment naming the ceiling and the upgrade path.
 
+## Art quality standards
+
+The bar is modern stylized — Fortnite/Wild Rift cel-shade, not "procedural, so forgiven". Three.js is not the
+ceiling; lighting, material and composition are. A change that renders muddy, flat or banded is a regression
+regardless of how correct the gameplay is. The framework renders GLB champions beautifully with the same
+shaders, so procedural assets get judged by the same standard: surface variation, not excuses.
+
+**Lighting (`game.ts` `prepare()`/`updateCamera`)**
+- Key light must cast visible, legible shadows across the lane. Keep the sun off the view axis (offset `x`,
+  pull `z` behind the focal plane, vertical angle < 45°) — a camera-parallel sun makes the scene flat.
+- Every scene needs key + hemisphere ambient + a fill/rim tint on the shaded side. Near-black unlit faces are
+  a bug, not atmosphere.
+- Objectives read as dead props unless they glow: tower crystals, nexus, relics and Mercadona want emissive
+  + optionally a `PointLight`.
+
+**Fog / atmosphere**
+- Fog far plane must sit beyond the playable lane (`BRIDGE.maxX * 2 + slack`); fog color lighter than the
+  ambient horizon it sits on. If mid-ground 30–60u reads as one flat smear, fog or ambient is wrong.
+- Depth needs ≥ 2 readable value steps between near/mid/far. Near-black-on-near-black palettes are the #1
+  source of "2009 browser game".
+
+**Material / banding**
+- The 3-step gradient map bands on large faces. Any big new surface (ground, walls, towers) must break banding
+  up via more gradient steps, texture at gameplay scale, or geometry variation. One flat box + one flat color
+  is rejected.
+- Judge textures at the camera's fighting distance, not authoring zoom.
+
+**Post vs more lights**
+- Prefer `renderer.bloom` / tone mapping before adding lights. Emissive + glow rings beat extra meshes for
+  readability.
+
+**Current known offenders (fix on sight)**
+- Dense short dark fog (`Fog(0x1a0f33, 30, 75)`) smearing the whole lane; camera-parallel sun in `updateCamera`;
+  3-step gradient map (`[90,170,255]`) banding the 136×20 ground slab.
+
+**Art definition of done**
+- Checklist passes by code inspection (sun angle, fog near/far + color, banding breaks, emissive on objectives)
+  and a screenshot is captured (`e2e.js` → `/tmp/aram-*.png`) for owner review.
+- If a change touches light/fog/material, the summary states it in checklist terms (key angle, fog planes, banding
+  fix, post added) — "tuned colors" is not reviewable.
+
 ## Known deliberate simplifications
 
 No client prediction; bush/stealth hiding is client-side; no skill points (R at level 6); Tibbers/tentacles are
 instant AoE not pets; Drake rune applies both effects; Mercadona channel not interrupted by damage; inhibitors
-don't respawn; no kill replay; procedural models only; synth audio + `speechSynthesis` only.
+don't respawn; no kill replay; procedural models only (but judged against the Art quality standards), synth audio
++ `speechSynthesis` only.
 See `INIT.md §14` for upgrade paths. Don't "fix" these unless asked.
 
 ## Workflow conventions (repo owner)

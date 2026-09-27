@@ -5,12 +5,15 @@ import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.j
 import { clone as skClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { side } from "../shared/data";
 
-const grad = (() => {
-  const t = new THREE.DataTexture(new Uint8Array([90, 170, 255]), 3, 1, THREE.RedFormat);
-  t.minFilter = t.magFilter = THREE.NearestFilter;
+const ramp = (steps: number[], filter: THREE.MagnificationTextureFilter) => {
+  const t = new THREE.DataTexture(new Uint8Array(steps), steps.length, 1, THREE.RedFormat);
+  t.minFilter = t.magFilter = filter;
   t.needsUpdate = true;
   return t;
-})();
+};
+// characters/props: crisp 4-band cel; big surfaces (ground, walls): soft interpolated ramp so they never posterize into slabs
+const grad = ramp([70, 135, 200, 255], THREE.NearestFilter);
+export const softGrad = ramp([80, 130, 185, 230, 255], THREE.LinearFilter);
 const mats = new Map<string, THREE.Material>();
 export const toon = (color: number, o: THREE.MeshToonMaterialParameters = {}) => {
   const k = color + JSON.stringify(o);
@@ -85,8 +88,8 @@ const chain = (y: number) => at(mesh(new THREE.TorusGeometry(0.22, 0.03, 6, 16),
 const GLB_CHAMPS = ["torrente", "kanye", "epstein", "diddy", "mortadelo"];
 const HEIGHT: Record<string, number> = { ezreal: 1.9, annie: 1.3, jhin: 1.9, caitlyn: 1.9, garen: 2.2, darius: 2.2, illaoi: 2.1, karma: 1.9 };
 const glbs = new Map<string, { scene: THREE.Object3D; clips: THREE.AnimationClip[] }>();
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 export async function loadChampModels() {
-  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   await Promise.all([...[...GLB_CHAMPS, ...Object.keys(HEIGHT)].map(id => loader.loadAsync(`/models/${id}.glb`).then(g => {
     toonify(g.scene);
     let scene = g.scene;
@@ -109,21 +112,50 @@ export async function loadChampModels() {
 // Ability props made in Blender (blender/meme_champs.py FX): sneaker, disco ball, flask... undefined if fx.glb failed.
 const fxProps = new Map<string, THREE.Object3D>();
 export const fxModel = (name: string) => fxProps.get(name)?.clone();
-function toonify(root: THREE.Object3D) {
+// world: true for Blender world assets (blender/arena.py, structures.py, minions.py): "glow*" materials bloom (×boost),
+// "team*" ones are flagged for tint(), big scaled nodes skip the outline (its 0.035 push is in local units).
+function toonify(root: THREE.Object3D, world = false, gm = grad, boost = 3) {
   const meshes: THREE.Mesh[] = [];
+  root.updateMatrixWorld(true);
   root.traverse(o => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+  const ws = new THREE.Vector3();
   for (const m of meshes) {
-    const src = m.material as THREE.MeshStandardMaterial, e = src.emissive.getHex();
+    const src = m.material as THREE.MeshStandardMaterial, e = src.emissive?.getHex() ?? 0, glow = world && /glow/.test(src.name);
     m.castShadow = true;
+    m.receiveShadow = world;
+    if (world && src.name.startsWith("team")) m.userData.team = glow ? "glow" : "solid";
     if (src.map) { // ponytail: textured Sketchfab meshes get no inverted-hull outline (skinned + arbitrary node scale)
-      m.material = new THREE.MeshToonMaterial({ map: src.map, color: src.color, gradientMap: grad, transparent: src.transparent, alphaTest: src.alphaTest, side: src.side });
-      m.frustumCulled = false; // skinned bounds are bind-pose only
+      m.material = new THREE.MeshToonMaterial({ map: src.map, color: src.color, gradientMap: gm, transparent: src.transparent, alphaTest: src.alphaTest, side: src.side, ...(glow ? { emissive: e || src.color.getHex(), emissiveIntensity: boost } : e ? { emissive: e, emissiveMap: src.emissiveMap } : {}) });
+      m.frustumCulled = !(m as THREE.SkinnedMesh).isSkinnedMesh; // skinned bounds are bind-pose only
       continue;
     }
-    const opts: THREE.MeshToonMaterialParameters = { ...(e ? { emissive: e } : {}), ...(src.opacity < 1 ? { transparent: true, opacity: src.opacity } : {}) };
+    const opts: THREE.MeshToonMaterialParameters = { ...(gm !== grad ? { gradientMap: gm } : {}), ...(glow ? { emissive: e || src.color.getHex(), emissiveIntensity: boost } : e ? { emissive: e } : {}), ...(src.opacity < 1 ? { transparent: true, opacity: src.opacity } : {}) };
     m.material = toon(src.color.getHex(), opts);
-    if (!opts.transparent) m.add(new THREE.Mesh(m.geometry, outlineMat));
+    if (!opts.transparent && !glow && !(m as THREE.SkinnedMesh).isSkinnedMesh && m.getWorldScale(ws).x < 1.6) m.add(new THREE.Mesh(m.geometry, outlineMat));
   }
+}
+
+// ---------------------------------------------------------------- Blender world assets (optional: every builder falls back to procedural)
+const TEAM_HEX = [0x3a8cff, 0xff4545];
+const world = new Map<string, { scene: THREE.Object3D; clips: THREE.AnimationClip[] }>();
+export async function loadWorldModels() {
+  const get = (f: string, on: (g: { scene: THREE.Group; animations: THREE.AnimationClip[] }) => void) =>
+    loader.loadAsync(`/models/${f}.glb`).then(on).catch(e => console.warn(`${f}.glb failed, using procedural fallback`, e));
+  await Promise.all([
+    get("arena", g => { toonify(g.scene, true, softGrad, 1.2); world.set("arena", { scene: g.scene, clips: [] }); }),
+    get("structures", g => { toonify(g.scene, true); for (const o of [...g.scene.children]) { o.position.set(0, 0, 0); world.set(o.name, { scene: o, clips: [] }); } }),
+    ...["melee", "caster", "siege", "super"].map(k => get(`minion_${k}`, g => { toonify(g.scene, true); world.set(`minion_${k}`, { scene: g.scene, clips: g.animations }); })),
+  ]);
+}
+export const arenaModel = () => world.get("arena")?.scene;
+// clone a world asset and paint its team* materials; undefined when the GLB didn't load
+function worldModel(name: string, team = 2) {
+  const w = world.get(name);
+  if (!w) return;
+  const o = w.clips.length ? skClone(w.scene) : w.scene.clone();
+  const col = TEAM_HEX[team] ?? 0xc8b0ff;
+  o.traverse(m => { if (m.userData.team) (m as THREE.Mesh).material = toon(col, m.userData.team === "glow" ? { emissive: col, emissiveIntensity: 3 } : {}); });
+  return o;
 }
 function clipAnim(root: THREE.Object3D, clips: THREE.AnimationClip[]): Anim {
   type A = THREE.AnimationAction;
@@ -210,6 +242,8 @@ export function champModel(id: string, color: number, accent: number): Rig {
 
 // ---------------------------------------------------------------- pigeons
 export function pigeonModel(kind: string, team: number) {
+  const k = kind === "cannon" ? "siege" : kind, o = worldModel(`minion_${k}`, team);
+  if (o) { o.userData.anim = clipAnim(o, world.get(`minion_${k}`)!.clips); return o; }
   const g = new THREE.Group(), s = kind === "super" ? 1.7 : kind === "cannon" ? 1.1 : 1;
   const body = new THREE.Group();
   body.add(at(mesh(sph(0.35), 0x8a8f9a), 0, 0.45, 0, 0, 0, 0));
@@ -264,13 +298,15 @@ function bannerTex(team: number) {
 }
 
 export function towerModel(team: number) {
+  const w = worldModel("tower", team);
+  if (w) { w.userData.crystal = w.userData.core = w.getObjectByName("crystal") ?? new THREE.Object3D(); return w; }
   const g = new THREE.Group();
   g.add(at(mesh(box(2.6, 0.5, 2.6), 0xe8e2d0), 0, 0.25, 0));
   g.add(at(mesh(box(2.2, 0.3, 2.2), 0xdcd5c0), 0, 0.65, 0));
   g.add(at(mesh(new THREE.CylinderGeometry(0.75, 0.9, 6, 16), 0xf0ead8), 0, 3.8, 0));
   g.add(at(mesh(cyl(1.1, 0.8, 0.4, 16), 0xe8e2d0), 0, 6.95, 0));
   g.add(at(mesh(box(2.3, 0.35, 2.3), 0xdcd5c0), 0, 7.3, 0));
-  const crystal = at(mesh(new THREE.OctahedronGeometry(0.6), team ? 0xff4a3d : 0x4aa8ff, { emissive: team ? 0x661a10 : 0x103a66 }), 0, 8.4, 0);
+  const crystal = at(mesh(new THREE.OctahedronGeometry(0.6), team ? 0xff4a3d : 0x4aa8ff, { emissive: team ? 0xff4a3d : 0x4aa8ff, emissiveIntensity: 9 }), 0, 8.4, 0);
   g.add(crystal);
   g.userData.crystal = crystal;
   const banner = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 3.6, 8, 1), new THREE.MeshToonMaterial({ map: bannerTex(team), gradientMap: grad, side: THREE.DoubleSide }));
@@ -278,7 +314,9 @@ export function towerModel(team: number) {
   return g;
 }
 
-export function inhibModel() {
+export function inhibModel(team: number) {
+  const w = worldModel("inhib", team);
+  if (w) { w.userData.core = w.getObjectByName("core"); w.userData.ballots = []; return w; }
   const g = new THREE.Group();
   g.add(at(mesh(box(2.4, 0.3, 2.4), 0x444455), 0, 0.15, 0));
   g.add(at(new THREE.Mesh(box(2, 2.4, 2), new THREE.MeshPhysicalMaterial({ color: 0xddeeff, transparent: true, opacity: 0.25, roughness: 0.05, transmission: 0.6 })), 0, 1.5, 0));
@@ -294,6 +332,8 @@ export function inhibModel() {
 }
 
 export function nexusModel(team: number) {
+  const w = worldModel("nexus", team);
+  if (w) { w.userData.seats = [0, 1, 2, 3, 4, 5, 6, 7].map(i => w.getObjectByName("piece" + i)).filter(Boolean); w.userData.facade = new THREE.Object3D(); w.userData.core = w.getObjectByName("core"); return w; }
   const g = new THREE.Group();
   g.add(at(mesh(cyl(4, 4.3, 0.6, 32), 0xd8d0bc), 0, 0.3, 0));
   const seats: THREE.Object3D[] = [];
@@ -367,6 +407,8 @@ export function bushModel(w: number, d: number) {
 }
 
 export function relicModel() {
+  const w = worldModel("relic");
+  if (w) return w;
   const g = new THREE.Group();
   g.add(at(new THREE.Mesh(cyl(0.2, 0.16, 0.5, 14), new THREE.MeshToonMaterial({ color: 0xf2a515, gradientMap: grad, transparent: true, opacity: 0.85, emissive: 0x442200 })), 0, 0.45, 0));
   g.add(at(mesh(cyl(0.21, 0.21, 0.12, 14), 0xffffff), 0, 0.74, 0));
@@ -377,6 +419,8 @@ export function relicModel() {
 }
 
 export function shopModel() {
+  const w = worldModel("shop");
+  if (w) return w;
   const g = new THREE.Group();
   g.add(at(mesh(box(3.2, 1.1, 1), 0x9a6a3a), 0, 0.55, 0));
   g.add(at(mesh(box(3.6, 3, 0.3), 0xcccccc), 0, 1.5, -1.6));
@@ -398,6 +442,8 @@ export function shopModel() {
 }
 
 export function mercadonaModel() {
+  const w = worldModel("guardian");
+  if (w) return w;
   const g = new THREE.Group();
   g.add(at(mesh(box(5, 2.8, 4), 0xf4f4f0), 0, 1.4, 0));
   g.add(at(mesh(box(5.05, 0.3, 4.05), 0x0a8a3a), 0, 2.2, 0));
@@ -415,16 +461,44 @@ export function mercadonaModel() {
   return g;
 }
 
-export function stoneTex() {
-  const t = canvasTex(512, 512, c => {
-    c.fillStyle = "#8d8a86"; c.fillRect(0, 0, 512, 512);
-    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-      const v = 125 + Math.random() * 30;
-      c.fillStyle = `rgb(${v},${v - 4},${v - 10})`;
-      c.fillRect(x * 64 + 2 + (y % 2) * 32, y * 64 + 2, 60, 60);
+// Flagstone floor at gameplay scale: one 2048 canvas = 16×16 world units (stones ~1–2 u), per-stone value jitter,
+// bevel light/shadow edges, dark grout, cracks and moss, plus a low-frequency wash so the tiling doesn't read.
+export function floorTex() {
+  const N = 2048, U = N / 16, rnd = (a: number, b: number) => a + Math.random() * (b - a);
+  const t = canvasTex(N, N, c => {
+    c.fillStyle = "#2c2a33"; c.fillRect(0, 0, N, N); // grout
+    for (let y = 0; y < N;) {
+      const rh = U * rnd(1.1, 1.9);
+      for (let x = -rnd(0, U); x < N;) {
+        const w = U * rnd(1.2, 2.4), g = 5, v = rnd(118, 168), warm = rnd(-8, 8);
+        const [x0, y0, x1, y1] = [x + g, y + g, x + w - g, y + rh - g];
+        c.fillStyle = `rgb(${v + warm},${v - 2},${v + 8 - warm})`; c.fillRect(x0, y0, x1 - x0, y1 - y0);
+        c.fillStyle = "rgba(255,245,225,0.22)"; c.fillRect(x0, y0, x1 - x0, 7); c.fillRect(x0, y0, 7, y1 - y0); // lit bevel
+        c.fillStyle = "rgba(10,8,20,0.32)"; c.fillRect(x0, y1 - 9, x1 - x0, 9); c.fillRect(x1 - 9, y0, 9, y1 - y0); // shadow bevel
+        for (let i = 0; i < 40; i++) { c.fillStyle = `rgba(${Math.random() < 0.5 ? "0,0,0" : "255,255,255"},${rnd(0.03, 0.08)})`; c.fillRect(rnd(x0, x1), rnd(y0, y1), rnd(6, 30), rnd(6, 30)); }
+        if (Math.random() < 0.25) { // crack
+          c.strokeStyle = "rgba(20,16,30,0.6)"; c.lineWidth = 3; c.beginPath();
+          let cx = rnd(x0, x1), cy = y0; c.moveTo(cx, cy);
+          while (cy < y1) { cx += rnd(-18, 18); cy += rnd(12, 30); c.lineTo(Math.min(x1, Math.max(x0, cx)), Math.min(y1, cy)); }
+          c.stroke();
+        }
+        x += w;
+      }
+      y += rh;
     }
-    for (let i = 0; i < 500; i++) { c.fillStyle = `rgba(0,0,0,${Math.random() * 0.12})`; c.fillRect(Math.random() * 512, Math.random() * 512, 3, 3); }
+    for (let i = 0; i < 26; i++) { // moss in the grout / corners
+      const gx = rnd(0, N), gy = rnd(0, N), r = rnd(30, 110), gr = c.createRadialGradient(gx, gy, 0, gx, gy, r);
+      gr.addColorStop(0, "rgba(70,110,60,0.55)"); gr.addColorStop(1, "rgba(70,110,60,0)");
+      c.fillStyle = gr; c.fillRect(gx - r, gy - r, r * 2, r * 2);
+    }
+    for (let i = 0; i < 10; i++) { // big soft light/dark wash
+      const gx = rnd(0, N), gy = rnd(0, N), r = rnd(300, 700), gr = c.createRadialGradient(gx, gy, 0, gx, gy, r);
+      const col = Math.random() < 0.5 ? "20,16,40" : "255,240,210";
+      gr.addColorStop(0, `rgba(${col},0.16)`); gr.addColorStop(1, `rgba(${col},0)`);
+      c.fillStyle = gr; c.fillRect(gx - r, gy - r, r * 2, r * 2);
+    }
   });
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
   return t;
 }

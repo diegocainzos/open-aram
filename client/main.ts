@@ -111,7 +111,7 @@ function enter(r: Room<any, any>) {
   room = r;
   (window as any).room = r; // handy for debugging/E2E
   clearInterval(refresh);
-  let phase = "";
+  let phase = "", loadP: Promise<void> | undefined;
   r.onMessage("chat", m => { chatLog.push(m); renderChat(); gameMod?.onChat(m); });
   r.onLeave(() => { if (room === r) { gameMod?.stop(); home(); } });
   r.onStateChange(s => {
@@ -119,8 +119,9 @@ function enter(r: Room<any, any>) {
       phase = s.phase;
       if (phase === "lobby") lobby();
       else if (phase === "select") select();
-      else if (phase === "loading") loading();
-      else if (phase === "game" && !gameMod?.running()) startGame();
+      else if (phase === "loading") loadP = loading();
+      // a throttled background tab can still be loading when the server's 20 s timeout starts the game
+      else if (phase === "game") (loadP ??= loading()).then(() => { if (room === r && !gameMod!.running()) startGame(); });
       else if (phase === "end") setTimeout(postGame, 4500);
     }
     if (phase === "lobby") renderLobby();

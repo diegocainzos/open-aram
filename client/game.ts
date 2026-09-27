@@ -1,9 +1,10 @@
 import type { Room } from "@colyseus/sdk";
 import * as THREE from "three";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { BRIDGE, BUSHES, CHAMPS, FOUNTAIN_X, ITEMS, RELICS, RUNES, SHOP_RADIUS, SPELLS, champ, inBush, item, side, xpFor } from "../shared/data";
 import { music, sfx, speak, startMusic, stopMusic, vol, applyVolume } from "./audio";
 import { esc, h, splash } from "./main";
-import { type Rig, bushModel, champModel, fxModel, inhibModel, loadChampModels, mercadonaModel, mesh, nexusModel, pigeonModel, relicModel, shopModel, stoneTex, textSprite, toon, towerModel } from "./models";
+import { type Anim, type Rig, arenaModel, loadWorldModels, bushModel, champModel, fxModel, inhibModel, loadChampModels, mercadonaModel, mesh, nexusModel, pigeonModel, relicModel, shopModel, floorTex, softGrad, textSprite, toon, towerModel } from "./models";
 
 const ICONS: Record<string, string[]> = {
   ezreal: ["✴️", "🔮", "⚡", "🌊", "💫"], annie: ["🔥", "🌋", "🛡️", "🧸", "🎀"], ryze: ["📜", "⛓️", "🔵", "🌀", "📘"],
@@ -26,7 +27,7 @@ let R: Room<any, any>;
 let me = "";
 let myTeam = 0;
 let flip = 1;
-let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, sun: THREE.DirectionalLight;
+let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, sun: THREE.DirectionalLight, fill: THREE.DirectionalLight;
 let alive = false, raf = 0;
 const clock = new THREE.Timer();
 const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -63,22 +64,41 @@ export async function prepare(room: Room<any, any>, report: (p: number) => void)
   flip = myTeam ? -1 : 1;
   const canvas = document.getElementById("gl") as HTMLCanvasElement;
   if (!renderer) {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // HDR output: tone mapping + bloom run inside the renderer (r186 setEffects), emissive > 1 blooms
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, outputBufferType: THREE.HalfFloatType });
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.setEffects([new UnrealBloomPass(new THREE.Vector2(512, 512), 0.7, 0.45, 3.2)]);
   }
+  // rematch in the same tab: drop everything the previous game left in module state
+  views.clear(); projViews.clear(); keysDown.clear();
+  tweens.length = relicObjs.length = bushObjs.length = 0;
+  merc = focusOverride = hovered = undefined;
+  deathZoom = wobbleUntil = slowmoUntil = 0; aiming = hoverSlot = -1; pingMarks = [];
+  chatOpen = shopOpen = statsOpen = menuOpen = lastDeadState = false;
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x120a24);
-  scene.fog = new THREE.Fog(0x1a0f33, 30, 75);
-  camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.5, 300);
-  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x3a2a4a, 1.3));
-  sun = new THREE.DirectionalLight(0xfff0d8, 2.2);
+  // abyss night: fog is lighter than the void behind it and ends past the whole lane, so depth reads near → far
+  scene.background = new THREE.Color(0x1c2250);
+  scene.fog = new THREE.Fog(0x4a5594, 45, BRIDGE.maxX * 2 + 40);
+  camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.5, 300);
+  scene.add(new THREE.HemisphereLight(0xc4d8ff, 0x4a3c66, 1.1));
+  // key: warm, low (< 45°), off the view axis and behind the focal plane so shadows rake toward the camera
+  sun = new THREE.DirectionalLight(0xffe2b5, 2.6);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 80 });
-  scene.add(sun, sun.target);
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.04;
+  Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 90 });
+  // fill: cool, from the camera side opposite the key, lifts the shaded faces off black
+  fill = new THREE.DirectionalLight(0x7f9cff, 1.1);
+  scene.add(sun, sun.target, fill, fill.target);
+  scene.add(aim);
   await tick();
+  report(50);
+  await loadWorldModels();
   report(60);
   buildMap();
   report(80);
@@ -91,16 +111,60 @@ export async function prepare(room: Room<any, any>, report: (p: number) => void)
 const tick = () => new Promise(r => setTimeout(r, 30));
 
 function buildMap() {
-  const tex = stoneTex();
-  tex.repeat.set(28, 4);
-  const bridge = new THREE.Mesh(new THREE.BoxGeometry(BRIDGE.maxX * 2 + 4, 2, BRIDGE.halfW * 2 + 2), toon(0xffffff, { map: tex }));
+  const arena = arenaModel();
+  if (arena) buildArena(arena); else buildProcMap();
+  const stars = new THREE.BufferGeometry();
+  stars.setAttribute("position", new THREE.Float32BufferAttribute(Array.from({ length: 1500 }, (_, i) => (i % 3 === 1 ? -20 - Math.random() * 60 : (Math.random() - 0.5) * 300)), 3));
+  scene.add(new THREE.Points(stars, new THREE.PointsMaterial({ color: 0xc8b8ff, size: 0.4, fog: false })));
+  for (const team of [0, 1]) {
+    const x = side(team) * FOUNTAIN_X;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(SHOP_RADIUS, 0.12, 6, 60), new THREE.MeshBasicMaterial({ color: TEAMCOL[team] }));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(x, 0.25, 0);
+    scene.add(ring);
+    const shop = shopModel();
+    shop.position.set(x + side(team) * 3, 0, -5.5);
+    shop.rotation.y = side(team) * -0.6;
+    scene.add(shop);
+  }
+  for (const r of RELICS) {
+    const o = relicModel();
+    o.position.set(r.x, 0, r.z);
+    o.visible = false;
+    scene.add(o);
+    relicObjs.push(o);
+  }
+}
+
+// Blender arena (blender/arena.py): lane, walls, lamps, fountains, abyss; bush0..3 follow BUSHES order and fade when you're inside
+function buildArena(arena: THREE.Object3D) {
+  scene.add(arena);
+  BUSHES.forEach((_, i) => {
+    const g = arena.getObjectByName("bush" + i);
+    if (!g) return;
+    let mat: THREE.MeshToonMaterial | undefined; // one transparent copy per bush, so only the bush you stand in fades
+    g.traverse(o => { const m = o as THREE.Mesh; if (!m.isMesh || !(m.material as THREE.MeshToonMaterial).isMeshToonMaterial) return; mat ??= Object.assign((m.material as THREE.MeshToonMaterial).clone(), { transparent: true, opacity: 0.93 }); m.material = mat; });
+    if (mat) bushObjs.push({ g: g as THREE.Group, mat });
+  });
+}
+
+function buildProcMap() {
+  const L = BRIDGE.maxX * 2 + 4, W = BRIDGE.halfW * 2 + 2, tex = floorTex();
+  tex.repeat.set(L / 16, W / 16);
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(L, 2, W), toon(0xffffff, { map: tex, gradientMap: softGrad }));
   bridge.position.y = -1;
   bridge.receiveShadow = true;
   scene.add(bridge);
-  // walls / railings with streetlamps
+  // walls: textured stone body + lighter cap, with streetlamps
+  const wallTex = floorTex();
+  wallTex.repeat.set(L / 8, 0.1);
   for (const s of [-1, 1]) {
-    const wall = mesh(new THREE.BoxGeometry(BRIDGE.maxX * 2 + 4, 0.8, 0.6), 0x6e6a78);
+    const wall = mesh(new THREE.BoxGeometry(L, 0.8, 0.6), 0x8a8494, { map: wallTex, gradientMap: softGrad });
     wall.position.set(0, 0.4, s * (BRIDGE.halfW + 0.7));
+    wall.receiveShadow = true;
+    const cap = mesh(new THREE.BoxGeometry(L, 0.16, 0.8), 0xc9c2b4, { gradientMap: softGrad });
+    cap.position.y = 0.48;
+    wall.add(cap);
     scene.add(wall);
     for (let x = -60; x <= 60; x += 15) {
       const lamp = new THREE.Group();
@@ -127,33 +191,13 @@ function buildMap() {
   glow.rotation.x = -Math.PI / 2;
   glow.position.y = -45;
   scene.add(glow);
-  const stars = new THREE.BufferGeometry();
-  stars.setAttribute("position", new THREE.Float32BufferAttribute(Array.from({ length: 1500 }, (_, i) => (i % 3 === 1 ? -20 - Math.random() * 60 : (Math.random() - 0.5) * 300)), 3));
-  scene.add(new THREE.Points(stars, new THREE.PointsMaterial({ color: 0xc8b8ff, size: 0.4, fog: false })));
-  // fountains + shops
   for (const team of [0, 1]) {
-    const x = side(team) * FOUNTAIN_X;
     const plat = new THREE.Mesh(new THREE.CylinderGeometry(SHOP_RADIUS + 1, SHOP_RADIUS + 1, 0.3, 40), toon(team ? 0x5a2a2a : 0x2a3a5a));
-    plat.position.set(x, 0.05, 0);
+    plat.position.set(side(team) * FOUNTAIN_X, 0.05, 0);
     plat.receiveShadow = true;
     scene.add(plat);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(SHOP_RADIUS, 0.12, 6, 60), new THREE.MeshBasicMaterial({ color: TEAMCOL[team] }));
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(x, 0.25, 0);
-    scene.add(ring);
-    const shop = shopModel();
-    shop.position.set(x + side(team) * 3, 0, -5.5);
-    shop.rotation.y = side(team) * -0.6;
-    scene.add(shop);
   }
   for (const b of BUSHES) { const g = bushModel(b.w, b.d); g.position.set(b.x, 0, b.z); scene.add(g); bushObjs.push({ g, mat: g.userData.mat }); }
-  for (const r of RELICS) {
-    const o = relicModel();
-    o.position.set(r.x, 0, r.z);
-    o.visible = false;
-    scene.add(o);
-    relicObjs.push(o);
-  }
 }
 
 // ---------------------------------------------------------------- start / stop
@@ -210,6 +254,7 @@ function loop() {
   }
   R.state.relics.forEach((v: boolean, i: number) => { relicObjs[i].visible = v; relicObjs[i].rotation.y += dt; });
   updateCamera(dt, now);
+  updateAim();
   updateHud();
   renderer.render(scene, camera);
 }
@@ -224,13 +269,16 @@ function updateCamera(dt: number, now: number) {
   deathZoom += ((u?.dead ? 1 : 0) - deathZoom) * Math.min(1, dt * 1.5);
   const z = camZoom * (1 - deathZoom * 0.55);
   const target = new THREE.Vector3(fx, 0, fz);
-  const want = new THREE.Vector3(fx, 19 * z, fz + 11 * z * flip);
+  const want = new THREE.Vector3(fx, 21 * z, fz + 12 * z * flip);
   if (camera.position.distanceTo(want) > 30) camera.position.copy(want);
   else camera.position.lerp(want, Math.min(1, dt * 8));
   camera.lookAt(target);
   if (wobbleUntil > now) { camera.rotation.z += Math.sin(now * 3) * 0.08; camera.position.x += Math.sin(now * 2.1) * 0.6; }
-  sun.position.set(fx + 12, 30, fz + 10);
-  sun.target.position.copy(target);
+  const sx = Math.round(fx), sz = Math.round(fz); // snap so the shadow map doesn't crawl while walking
+  sun.target.position.set(sx, 0, sz);
+  sun.position.set(sx + 20 * flip, 21, sz - 16 * flip);
+  fill.target.position.set(sx, 0, sz);
+  fill.position.set(sx - 16 * flip, 12, sz + 14 * flip);
 }
 
 // ---------------------------------------------------------------- units
@@ -244,6 +292,13 @@ function visibleToMe(u: any) {
   return seen;
 }
 
+// objectives glow: a local team-coloured light (no shadows) on top of their emissive parts
+function glowLight<T extends THREE.Object3D>(o: T, color: number, y: number, intensity: number, dist: number) {
+  const l = new THREE.PointLight(color, intensity, dist, 2), at: THREE.Object3D | undefined = o.userData.core;
+  l.position.y = at ? 0 : y;
+  (at ?? o).add(l);
+  return o;
+}
 function createView(id: string, u: any): View {
   let obj: THREE.Object3D, rig: Rig | undefined, ring: THREE.Mesh | undefined;
   switch (u.kind) {
@@ -259,14 +314,14 @@ function createView(id: string, u: any): View {
       if (rig.extra.sheet) rig.extra.sheet.visible = false;
       break;
     }
-    case "tower": obj = towerModel(u.team); break;
-    case "inhib": obj = inhibModel(); break;
-    case "nexus": obj = nexusModel(u.team); break;
-    case "mercadona": obj = mercadonaModel(); merc = obj; sfx("boom"); break;
+    case "tower": obj = glowLight(towerModel(u.team), TEAMCOL[u.team], 9.8, 25, 16); break;
+    case "inhib": obj = glowLight(inhibModel(u.team), TEAMCOL[u.team], 3, 12, 9); break;
+    case "nexus": obj = glowLight(nexusModel(u.team), TEAMCOL[u.team], 6, 35, 16); break;
+    case "mercadona": obj = glowLight(mercadonaModel(), 0x7cff9a, 5, 30, 14); merc = obj; sfx("boom"); break;
     default: obj = pigeonModel(u.kind, u.team);
   }
   obj.position.set(u.x, 0, u.z);
-  obj.rotation.y = u.rot;
+  obj.rotation.y = ["tower", "inhib", "nexus"].includes(u.kind) ? -side(u.team) * Math.PI / 2 : u.rot; // structures face the enemy base
   scene.add(obj);
   const struct = ["tower", "inhib", "nexus"].includes(u.kind);
   const cls = u.kind === "champ" ? (id === me ? "me" : u.team === myTeam ? "ally" : "enemy") : u.team === myTeam ? "ally" : "enemy";
@@ -297,15 +352,17 @@ function syncUnits(dt: number) {
     v.obj.visible = v.vis && !(u.kind === "champ" && u.fx.includes("fakedeath") && u.team !== myTeam);
     v.obj.position.set(v.x, 0, v.z);
     if (u.kind === "champ") animChamp(v, u, dt, t);
-    else if (u.kind === "tower") { const c = (v.obj.userData.crystal as THREE.Object3D); c.rotation.y += dt; c.position.y = 8.4 + Math.sin(t * 2) * 0.2; c.visible = !u.dead; if (u.dead && !v.dead) collapse(v); }
-    else if (u.kind === "inhib") { for (const b of v.obj.userData.ballots) { b.rotation.x += dt; b.rotation.y += dt * 0.7; b.position.y = 0.6 + ((b.position.y + dt * 0.3 - 0.6) % 1.8); } if (u.dead && !v.dead) collapse(v); }
-    else if (u.kind === "nexus") { if (u.dead && !v.exploded) explodeNexus(v); }
+    else if (u.kind === "tower") { const c = (v.obj.userData.crystal as THREE.Object3D); c.userData.y0 ??= c.position.y; c.rotation.y += dt; c.position.y = c.userData.y0 + Math.sin(t * 2) * 0.2; c.visible = !u.dead; if (u.dead && !v.dead) collapse(v); }
+    else if (u.kind === "inhib") { for (const b of v.obj.userData.ballots) { b.rotation.x += dt; b.rotation.y += dt * 0.7; b.position.y = 0.6 + ((b.position.y + dt * 0.3 - 0.6) % 1.8); } const c = v.obj.userData.core; if (c) { c.rotation.y += dt; c.visible = !u.dead; } if (u.dead && !v.dead) collapse(v); }
+    else if (u.kind === "nexus") { const c = v.obj.userData.core; if (c) { c.rotation.y += dt * 0.5; c.visible = !u.dead; } if (u.dead && !v.exploded) explodeNexus(v); }
     else if (u.kind !== "mercadona") animPigeon(v, u, dt, t);
     v.dead = u.dead;
     updateBar(v, u);
   });
   for (const [id, v] of views) if (!seen.has(id)) {
-    scene.remove(v.obj);
+    const anim = v.obj.userData.anim as Anim | undefined;
+    if (anim) { anim.state("death"); tweens.push({ t: 0, dur: 1.2, fn: (_k, dt) => anim.mixer.update(dt), end: () => scene.remove(v.obj) }); } // minions leave state on death
+    else scene.remove(v.obj);
     v.bar.remove();
     views.delete(id);
     if (v.kind === "mercadona") merc = undefined;
@@ -367,6 +424,8 @@ function animChamp(v: View, u: any, dt: number, t: number) {
 
 function animPigeon(v: View, u: any, dt: number, t: number) {
   v.obj.rotation.y = v.rot;
+  const anim = v.obj.userData.anim as Anim | undefined;
+  if (anim) { if (u.atk !== v.atk) { v.atk = u.atk; anim.shot("attack"); } anim.state(u.moving ? "run" : "idle"); anim.mixer.update(dt); return; }
   const body = v.obj.userData.body as THREE.Object3D;
   if (u.atk !== v.atk) { v.atk = u.atk; v.atkT = 0.3; }
   v.atkT = Math.max(0, v.atkT - dt);
@@ -666,7 +725,7 @@ function onFx(m: any) {
     case "pressf": if (v) sprite3d("🇫", v.x, 3, v.z, "#fff", 2); break;
     case "fine": if (v) { sprite3d("☕🔥 This is fine", v.x, 3, v.z, "#ff9a3c", 2); burst(v.x, 1, v.z, 20, [0xff7a1a, 0xffd400], 3, 1.5, 0.15, -3); } break;
     case "buy": if (m.id === me) sfx("buy"); break;
-    case "bell": sfx("bell", vol * 0.35); break;
+    case "towershot": if (vol > 0.4) sfx("towershot", vol - 0.4); break; // only audible near the tower
     case "spell": onSpellFx(m, vol); break;
     default: if (m.tx !== undefined && m.r) ring(m.tx, m.tz, m.r, col);
   }
@@ -804,6 +863,83 @@ function addFeed(html: string, color: string) {
   setTimeout(() => el.remove(), 8000);
 }
 
+// ---------------------------------------------------------------- aim indicators (display only; the server decides hits)
+// Shapes mirror Sim.doCast: shot = range × radius·2 strip, aoe = radius circle clamped to range (range 0 = on self),
+// cone = range × radius° sector, dash/blink = path to min(cursor, range).
+let aiming = -1, hoverSlot = -1;
+const aimMat = (o: number) => new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: o, depthWrite: false, toneMapped: false, side: THREE.DoubleSide, fog: false });
+const flat = <G extends THREE.BufferGeometry>(g: G) => g.rotateX(-Math.PI / 2);
+const aim = new THREE.Group();
+const aimRange = new THREE.Mesh(flat(new THREE.RingGeometry(0.985, 1, 96)), aimMat(0.6));
+const aimArea = new THREE.Mesh(flat(new THREE.CircleGeometry(1, 48)), aimMat(0.2));
+const aimEdge = new THREE.Mesh(flat(new THREE.RingGeometry(0.93, 1, 48)), aimMat(0.75));
+const aimRect = new THREE.Mesh(flat(new THREE.PlaneGeometry(1, 1)).translate(0, 0, 0.5), aimMat(0.4)); // spans z 0..1
+const aimCone = new THREE.Mesh(new THREE.BufferGeometry(), aimMat(0.35));
+let coneDeg = 0;
+aim.add(aimRange, aimArea, aimEdge, aimRect, aimCone);
+aim.renderOrder = 5;
+function updateAim() {
+  const v = views.get(me), u = myUnit(), slot = aiming >= 0 ? aiming : hoverSlot;
+  aim.visible = slot >= 0 && !!v && !!u && !u.dead;
+  if (!aim.visible) return;
+  mouse.world.copy(groundAt(mouse.x, mouse.y)); // the camera moves under a still cursor
+  const ab = champ(u.champ).abilities[slot];
+  const col = u.cds[slot] > 0 || u.mana < ab.mana ? 0xff7070 : 0x9fd8ff;
+  for (const m of aim.children as THREE.Mesh[]) { m.visible = false; (m.material as THREE.MeshBasicMaterial).color.setHex(col); }
+  aim.position.set(v!.x, 0.07, v!.z);
+  const ox = mouse.world.x - v!.x, oz = mouse.world.z - v!.z, len = Math.hypot(ox, oz) || 1, dx = ox / len, dz = oz / len, yaw = Math.atan2(dx, dz);
+  if (ab.range > 0) { aimRange.visible = true; aimRange.scale.setScalar(ab.range); }
+  if (aiming < 0) return; // hovering the HUD icon: range only
+  const area = (x: number, z: number, r: number) => {
+    for (const m of [aimArea, aimEdge]) { m.visible = true; m.position.set(x, 0, z); m.scale.setScalar(r); }
+  };
+  const strip = (w: number, d: number, dir = yaw) => { aimRect.visible = true; aimRect.scale.set(w, 1, d); aimRect.rotation.y = dir; };
+  switch (ab.kind) {
+    case "shot": strip((ab.radius ?? 0.6) * 2, ab.range); break;
+    case "aoe": { const d = ab.range ? Math.min(len, ab.range) : 0; area(dx * d, dz * d, ab.radius ?? 2); break; }
+    case "cone": {
+      if (coneDeg !== (ab.radius ?? 45)) {
+        coneDeg = ab.radius ?? 45;
+        const half = (coneDeg * Math.PI) / 360;
+        aimCone.geometry.dispose();
+        aimCone.geometry = flat(new THREE.CircleGeometry(1, 32, -Math.PI / 2 - half, half * 2)); // centred on +z
+      }
+      aimCone.visible = true; aimCone.scale.setScalar(ab.range); aimCone.rotation.y = yaw;
+      break;
+    }
+    case "dash": case "blink": {
+      const back = ab.special === "recoil", d = back ? 3.5 : ab.special === "torpedo" || ab.special === "stop" ? ab.range : Math.min(len, ab.range);
+      strip(0.9, d, back ? yaw + Math.PI : yaw);
+      area((back ? -dx : dx) * d, (back ? -dz : dz) * d, ab.radius ?? 0.7);
+      break;
+    }
+    case "self": if (ab.radius) area(0, 0, ab.radius); break;
+  }
+}
+
+// ---------------------------------------------------------------- tooltips
+function tipHtml(key: string) {
+  const u = myUnit(), c = champ(u?.champ);
+  if (key === "p") return `<b>${esc(c.passive.name)}</b><em>Pasiva</em><p>${esc(c.passive.desc)}</p>`;
+  if (key[0] === "s") { const sp = SPELLS[key === "s0" ? u.spellD : u.spellF]; return sp ? `<b>${sp.icon} ${esc(sp.name)}</b><em>${key === "s0" ? "D" : "F"} · ${sp.cd}s</em><p>${esc(sp.desc)}</p>` : ""; }
+  const i = +key, a = c.abilities[i];
+  const meta = [a.mana ? `${a.mana} maná` : "Sin coste", `${a.cd}s`, a.range ? `Alcance ${a.range * 100}` : "", i === 3 ? "Nivel 6" : ""].filter(Boolean).join(" · ");
+  return `<b>${esc(a.name)} <kbd>${"QWER"[i]}</kbd></b><em>${meta}</em><p>${esc(a.desc)}</p>`;
+}
+function bindTips() {
+  hud.tip = h(`<div class="tooltip nopoint" style="display:none"></div>`);
+  hud.root.append(hud.tip);
+  hud.root.querySelectorAll<HTMLElement>("[data-tip]").forEach(el => {
+    el.onmouseenter = () => {
+      const k = el.dataset.tip!, r = el.getBoundingClientRect();
+      hud.tip.innerHTML = tipHtml(k);
+      Object.assign(hud.tip.style, { display: "", left: `${r.left + r.width / 2}px`, bottom: `${innerHeight - r.top + 10}px` });
+      hoverSlot = /^\d$/.test(k) ? +k : -1;
+    };
+    el.onmouseleave = () => { hud.tip.style.display = "none"; hoverSlot = -1; };
+  });
+}
+
 // ---------------------------------------------------------------- input
 function groundAt(cx: number, cy: number) {
   mouse.ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
@@ -831,6 +967,7 @@ function hoverAt(cx: number, cy: number) {
 function bindInput() {
   const cv = document.getElementById("gl")!;
   cv.oncontextmenu = e => e.preventDefault();
+  cv.onwheel = e => { camZoom = Math.max(0.6, Math.min(1.5, camZoom + Math.sign(e.deltaY) * 0.08)); };
   cv.onmousemove = e => {
     mouse.x = e.clientX; mouse.y = e.clientY;
     mouse.world.copy(groundAt(e.clientX, e.clientY));
@@ -840,12 +977,17 @@ function bindInput() {
   cv.onmousedown = e => {
     if (hud.wheel.style.display !== "none") { hud.wheel.style.display = "none"; return; }
     const p = groundAt(e.clientX, e.clientY);
+    if (aiming >= 0) { if (e.button === 0) return castSlot(aiming); aiming = -1; } // LoL: left-click casts, right-click cancels
     if (e.button === 0 && e.altKey) return sendPing("danger", p);
     if (e.button !== 2) return;
     const t = hoverAt(e.clientX, e.clientY);
     if (t) R.send("attack", { id: t });
     else { R.send("move", { x: p.x, z: p.z }); clickMarker(p); }
   };
+  window.addEventListener("keydown", onKey);
+  window.addEventListener("keyup", onKeyUp);
+  if (cv.dataset.bound) return;
+  cv.dataset.bound = "1"; // the drag listeners below survive stop(), so only add them once per page
   let dragging = false;
   cv.addEventListener("mousedown", e => { if (e.button === 2) dragging = true; });
   window.addEventListener("mouseup", () => dragging = false);
@@ -856,12 +998,13 @@ function bindInput() {
     const p = groundAt(e.clientX, e.clientY);
     R.send("move", { x: p.x, z: p.z });
   });
-  cv.onwheel = e => { camZoom = Math.max(0.6, Math.min(1.5, camZoom + Math.sign(e.deltaY) * 0.08)); };
-  window.addEventListener("keydown", onKey);
-  window.addEventListener("keyup", onKeyUp);
 }
 function clickMarker(p: THREE.Vector3) {
   ring(p.x, p.z, 0.5, 0x40ff80, 0.4, 0, 0.1);
+}
+function castSlot(slot: number) {
+  aiming = -1;
+  R.send("cast", { slot, x: mouse.world.x, z: mouse.world.z, id: hovered });
 }
 function sendPing(type: string, p = mouse.world) { R.send("ping", { x: p.x, z: p.z, type }); }
 
@@ -879,7 +1022,7 @@ function onKey(e: KeyboardEvent) {
   keysDown.add(k);
   const p = mouse.world;
   const slot = "qwer".indexOf(k);
-  if (slot >= 0) return R.send("cast", { slot, x: p.x, z: p.z, id: hovered });
+  if (slot >= 0) { const ab = champ(myUnit()?.champ).abilities[slot]; if (ab.kind === "self" && !ab.radius) castSlot(slot); else aiming = slot; return; }
   if (k === "d" || k === "f") return R.send("spell", { slot: k === "d" ? 0 : 1, x: p.x, z: p.z, id: hovered });
   if (k === "b") return R.send("recall");
   if (k === "s") return R.send("stop");
@@ -891,7 +1034,9 @@ function onKey(e: KeyboardEvent) {
   if (k === "y" || k === " ") { const v = views.get(me); if (v) focus(v.x, v.z, 0); }
 }
 function onKeyUp(e: KeyboardEvent) {
-  keysDown.delete(e.key.toLowerCase());
+  const k = e.key.toLowerCase();
+  keysDown.delete(k);
+  if (aiming >= 0 && "qwer".indexOf(k) === aiming) castSlot(aiming);
   if (e.key === "Tab") hud.score.style.display = "none";
 }
 function openChat() { chatOpen = true; hud.chat.classList.add("open"); hud.chatlog.classList.add("open"); const i = hud.chat.querySelector("input")!; i.focus(); }
@@ -916,9 +1061,9 @@ function buildHud() {
         <div class="portrait" style="background-image:url(${splash(c.id)})"><div class="xp" id="xp"></div><div class="lvl" id="lvl">1</div></div>
         <div class="mid">
           <div class="abil">
-            <div class="slotb passive" title="${esc(c.passive.name)}: ${esc(c.passive.desc)}">${ICONS[c.id][4]}</div>
-            ${c.abilities.map((a, i) => `<div><div class="slotb" id="ab${i}" title="${esc(a.name)}: ${esc(a.desc)}">${ICONS[c.id][i]}<span class="cost">${a.mana || ""}</span><span class="key">${"QWER"[i]}</span><div class="cdw"></div></div><div class="pips" id="pip${i}"></div></div>`).join("")}
-            ${[0, 1].map(i => `<div class="slotb small" id="sp${i}" title="${SPELLS[i ? u.spellF : u.spellD]?.name}: ${esc(SPELLS[i ? u.spellF : u.spellD]?.desc ?? "")}">${SPELLS[i ? u.spellF : u.spellD]?.icon}<span class="key">${"DF"[i]}</span><div class="cdw"></div></div>`).join("")}
+            <div class="slotb passive" data-tip="p">${ICONS[c.id][4]}</div>
+            ${c.abilities.map((a, i) => `<div><div class="slotb" id="ab${i}" data-tip="${i}">${ICONS[c.id][i]}<span class="cost">${a.mana || ""}</span><span class="key">${"QWER"[i]}</span><div class="cdw"></div></div><div class="pips" id="pip${i}"></div></div>`).join("")}
+            ${[0, 1].map(i => `<div class="slotb small" id="sp${i}" data-tip="s${i}">${SPELLS[i ? u.spellF : u.spellD]?.icon}<span class="key">${"DF"[i]}</span><div class="cdw"></div></div>`).join("")}
           </div>
           <div class="bars"><div class="bar h"><i id="hpb"></i><s id="shb"></s><span id="hpt"></span></div><div class="bar m"><i id="mpb"></i><span id="mpt"></span></div></div>
         </div>
@@ -944,6 +1089,8 @@ function buildHud() {
   app.innerHTML = "";
   app.append(el);
   el.querySelectorAll<HTMLElement>("[id]").forEach(x => hud[x.id] = x);
+  hud.root = el;
+  bindTips();
   for (const m of chatLogRef.slice(-6)) onChat(m);
   const input = hud.chat.querySelector("input")!;
   input.onkeydown = e => {

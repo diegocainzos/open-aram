@@ -146,6 +146,99 @@ const duel = (a: string, b: string) => {
   assert.ok(A.u.x > x0 + 5, "Mortadelo didn't fly");
   assert.ok(d.has(B, "stun"), "torpedo impact didn't stun");
 }
+{ // Amogus needs standing still: walking doesn't disguise, and moving drops it
+  const { d, A, run } = duel("garen", "annie");
+  A.u.rune = "amogus"; d.nextWave = 1e9; A.u.x = -12;
+  d.cmdMove("a", -20, 3); run(2);
+  assert.equal(A.amogus, false, "disguised while walking");
+  run(3); assert.ok(A.amogus, "no disguise after standing still");
+  d.cmdMove("a", -12, 3); run(0.1);
+  assert.equal(A.amogus, false, "disguise survives moving");
+}
+{ // Modo NPC only protects the first 2s of combat, even if the NPC keeps attacking
+  const { d, A, B, run } = duel("garen", "garen");
+  A.u.rune = "npc"; d.nextWave = 1e9;
+  d.cmdAttack("a", "b"); d.cmdAttack("b", "a");
+  const hp0 = A.u.hp; run(6);
+  assert.ok(A.u.hp < hp0 - 100, `NPC rune took only ${hp0 - A.u.hp} in 6s of melee`);
+}
+{ // Epstein's marked Q teleports behind the target and the envelope still hits it
+  const { d, A, B, run } = duel("epstein", "garen");
+  d.nextWave = 1e9; A.u.x = -4; B.u.x = 0; B.u.rot = -Math.PI / 2; A.marks.set("b", 3);
+  const hp0 = B.u.hp;
+  d.cmdCast("a", 0, B.u.x, B.u.z); run(1);
+  assert.ok(A.u.x > B.u.x, "no teleport behind the target");
+  assert.ok(B.u.hp < hp0, "envelope flew away from the target");
+}
+{ // Twitter Ye's lethality can't take armor below 0 (no more-than-true damage)
+  const { d, A, B } = duel("kanye", "kanye");
+  A.twitter = B.twitter = true; d.stats(B);
+  assert.equal(B.u.armor, 0);
+  assert.ok(Math.abs(d.damage(A, B, 100, "phys") - 100) < 0.01, "lethality amplified damage on 0 armor");
+}
+{ // rooted champions can't dash or blink
+  const { d, A, B } = duel("kanye", "annie");
+  d.addCC(A, "root", 2, B);
+  d.cmdCast("a", 2, 10, 3);
+  assert.equal(A.dash, undefined, "rooted Kanye dashed");
+  const e = duel("ezreal", "annie"), x0 = e.A.u.x;
+  e.d.addCC(e.A, "root", 2, e.B);
+  e.d.cmdCast("a", 2, -8, 3);
+  assert.equal(e.A.u.x, x0, "rooted Ezreal blinked");
+}
+{ // targeted abilities and summoners can't hit structures (Caitlyn R sniping towers)
+  const { d, A, run } = duel("caitlyn", "annie");
+  A.u.level = 6; A.u.x = 0; A.u.z = 0; d.nextWave = 1e9;
+  const tw = d.rt.get("st10")!, hp0 = tw.u.hp;
+  d.cmdCast("a", 3, tw.u.x, tw.u.z, "st10");
+  d.cmdSpell("a", 1, tw.u.x, tw.u.z, "st10");
+  run(2);
+  assert.equal(tw.u.hp, hp0, "tower took ability/ignite damage");
+}
+{ // Darius' bleed doesn't apply to structures
+  const { d, A } = duel("darius", "annie");
+  const tw = d.rt.get("st10")!;
+  d.onHitPassives(A, tw, false);
+  assert.equal(tw.dots.length, 0, "tower bleeds");
+}
+{ // Ezreal E's auto-bolt doesn't home onto stealthed champions
+  const { d, A, B, run } = duel("ezreal", "epstein");
+  B.stealthUntil = 99; run(0.1);
+  const hp0 = B.u.hp;
+  d.cmdCast("a", 2, -3, 3); run(1);
+  assert.equal(B.u.hp, hp0, "bolt found the stealthed champion");
+}
+{ // dying clears disguises: Mortadelo doesn't respawn as a potted plant
+  const { d, A } = duel("mortadelo", "annie");
+  A.plant = true; A.stealthUntil = d.now + 6;
+  d.kill(A); d.respawn(A); d.tick(1 / 30);
+  assert.ok(!A.u.fx.includes("plant") && !A.u.stealth, `respawned with fx "${A.u.fx}"`);
+}
+{ // walking head-on into a tower slides around it instead of sticking forever
+  const { d, A, run } = duel("garen", "annie");
+  d.nextWave = 1e9; A.u.x = -20; A.u.z = 0;
+  d.cmdMove("a", -30, 0); run(4);
+  assert.ok(A.u.x < -28, `stuck on the tower at x=${A.u.x.toFixed(1)}`);
+}
+{ // Torrente's spell shield eats a piercing skillshot only for himself, not for allies behind him
+  const st = new State(); st.phase = "game";
+  const d = new Sim(st, () => {}, () => {});
+  d.setup(["ezreal", "torrente", "annie"].map((c, i) => ({ id: c, name: c, team: i ? 1 : 0, champ: c, spellD: "flash", spellF: "ghost", rune: "stonks" })));
+  const A = d.rt.get("ezreal")!, T = d.rt.get("torrente")!, N = d.rt.get("annie")!;
+  d.nextWave = 1e9; A.u.level = 6;
+  A.u.x = -4; T.u.x = 0; N.u.x = 3; A.u.z = T.u.z = N.u.z = 3;
+  T.spellshield = 99;
+  const hpT = T.u.hp, hpN = N.u.hp;
+  d.cmdCast("ezreal", 3, 10, 3);
+  for (let i = 0; i < 30; i++) d.tick(1 / 30);
+  assert.equal(T.u.hp, hpT, "spell shield didn't block");
+  assert.ok(N.u.hp < hpN, "piercing wave stopped at the spell shield");
+  // summoner spells cancel the recall channel
+  A.u.x = -40; d.cmdRecall("ezreal"); d.tick(1 / 30);
+  d.cmdSpell("ezreal", 1, 0, 0);
+  for (let i = 0; i < 270; i++) d.tick(1 / 30);
+  assert.ok(A.u.x > -50, "recall finished after casting Ghost");
+}
 { // "1 of 3" select: every player in a full 5v5 gets three distinct options
   const room = new GameRoom();
   (room as any)._listing = {};

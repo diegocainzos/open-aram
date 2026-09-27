@@ -21,3 +21,4 @@ Layout: `shared/data.ts` (champions, items, spells, runes, map) · `server/sim.t
 `server/GameRoom.ts` (lobby → select → loading → game) · `client/game.ts` (scene, HUD, VFX) ·
 `client/models.ts` (procedural toon models) · `client/audio.ts` (synth SFX/music, speechSynthesis announcer).
 `e2e.js` is a two-tab Playwright script (Playwright MCP `browser_run_code_unsafe`).
+Bug tracker: [`docs/bug-hunt/`](docs/bug-hunt/README.md) — auditoría de 2026-09-27, 50 hallazgos pendientes.

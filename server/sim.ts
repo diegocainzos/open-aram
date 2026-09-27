@@ -20,7 +20,7 @@ interface RT {
   id: string; u: Unit; c?: Champ; r: number; order?: number;
   mt?: { x: number; z: number }; target?: string; atkT: number; pending?: { slot: number; tid?: string; x: number; z: number };
   buffs: Buff[]; ccs: CCe[]; shields: { amt: number; until: number }[]; dots: Dot[]; dash?: Dash;
-  assist: Map<string, number>; lastChamp?: string; lastChampT: number; combatT: number;
+  assist: Map<string, number>; lastChamp?: string; lastChampT: number; combatT: number; combatStart: number;
   hits: number; casts: number; marks: Map<string, number>; freak: { tid: string; n: number };
   rage: number; ez: { n: number; until: number }; spellshield: number; stealthUntil: number; plant: boolean;
   fakeUntil: number; manicInv: boolean; manicNext: number; invertUntil: number; siestaUntil: number;
@@ -84,7 +84,7 @@ export class Sim {
 
   add(id: string, u: Unit, r: number): RT {
     const rt: RT = {
-      id, u, r, atkT: 0, buffs: [], ccs: [], shields: [], dots: [], assist: new Map(), lastChampT: -99, combatT: -99,
+      id, u, r, atkT: 0, buffs: [], ccs: [], shields: [], dots: [], assist: new Map(), lastChampT: -99, combatT: -99, combatStart: -99,
       hits: 0, casts: 0, marks: new Map(), freak: { tid: "", n: 0 }, rage: 0, ez: { n: 0, until: 0 }, spellshield: 0,
       stealthUntil: 0, plant: false, fakeUntil: 0, manicInv: false, manicNext: 0, invertUntil: 0, siestaUntil: 0,
       recallT: 0, tpT: 0, ccImmune: 0, form: "m", twitter: false, swapT: 15, stillT: 0, amogus: false, papelNext: 0,
@@ -228,8 +228,8 @@ export class Sim {
     const shred = t.shred.until > this.now ? t.shred.amt : 0;
     let res = dtype === "phys" ? t.u.armor : dtype === "magic" ? t.u.mr : 0;
     res *= 1 - shred;
-    if (dtype === "phys" && src?.c?.id === "kanye" && src.twitter) res -= 40;
-    let d = raw * (res >= 0 ? 100 / (100 + res) : 2 - 100 / (100 - res));
+    if (dtype === "phys" && src?.c?.id === "kanye" && src.twitter) res = Math.max(0, res - 40);
+    let d = raw * 100 / (100 + res);
     if (t.siestaUntil > this.now && src?.c) {
       t.siestaUntil = 0;
       this.addCC(t, "stun", 1.5, src);
@@ -281,6 +281,7 @@ export class Sim {
 
   enterCombat(rt: RT) {
     if (this.now - rt.combatT > 5) {
+      rt.combatStart = this.now;
       if (rt.u.rune === "drake") {
         rt.omniUntil = this.now + 5;
         for (const e of this.enemies(rt, rt.u.x, rt.u.z, 3)) this.push(e, rt.u.x, rt.u.z, 2.5);
@@ -327,6 +328,7 @@ export class Sim {
     u.respawn = 5 + u.level * 1.3;
     u.recall = 0;
     t.ccs = []; t.dots = []; t.buffs = []; t.shields = []; t.mt = undefined; t.target = undefined; t.pending = undefined; t.recallT = 0; t.tpT = 0;
+    t.plant = false; t.amogus = false; t.stealthUntil = 0; t.empowered = undefined;
     const assists = [...t.assist].filter(([id, at]) => at > this.now - 10 && id !== killer?.id).map(([id]) => this.rt.get(id)!).filter(Boolean);
     t.assist.clear();
     let multi = 0;
@@ -440,10 +442,10 @@ export class Sim {
 
   pickTarget(rt: RT, x: number, z: number, tid?: string, range = 99) {
     const t = tid ? this.rt.get(tid) : undefined;
-    if (this.targetableBy(t, rt) && dist(t.u, rt.u) <= range + 20) return t;
+    if (this.targetableBy(t, rt) && !this.isStruct(t) && dist(t.u, rt.u) <= range + 20) return t;
     let best: RT | undefined, bd = 2.2;
     for (const e of this.rt.values()) {
-      if (!this.targetableBy(e, rt)) continue;
+      if (!this.targetableBy(e, rt) || this.isStruct(e)) continue;
       const d = Math.hypot(e.u.x - x, e.u.z - z) - (e.c ? 0.6 : 0);
       if (d < bd) { bd = d; best = e; }
     }
@@ -455,7 +457,7 @@ export class Sim {
     if (!rt?.c || rt.u.dead || !Number.isInteger(slot) || !(slot >= 0 && slot < 4)) return;
     const ab = rt.c.abilities[slot];
     if (slot === 3 && rt.u.level < 6) return;
-    if (!this.canAct(rt) || this.has(rt, "silence") || rt.dash) return;
+    if (!this.canAct(rt) || this.has(rt, "silence") || rt.dash || (ab.kind === "dash" || ab.kind === "blink") && !this.canMove(rt)) return;
     if (rt.u.cds[slot] > 0 || rt.u.mana < this.manaCost(rt, ab)) return;
     if (ab.kind === "target") {
       const t = this.pickTarget(rt, x, z, tid, ab.range);
@@ -507,6 +509,10 @@ export class Sim {
         const t = this.rt.get(marked[0])!;
         rt.marks.delete(t.id);
         u.x = t.u.x - Math.sin(t.u.rot) * 1.3; u.z = t.u.z - Math.cos(t.u.rot) * 1.3;
+        this.pushOut(rt);
+        const l = Math.hypot(t.u.x - u.x, t.u.z - u.z) || 1;
+        dx = (t.u.x - u.x) / l; dz = (t.u.z - u.z) / l; // re-aim the envelope from behind
+        u.rot = Math.atan2(dx, dz);
         this.fx("blink", { x: u.x, z: u.z, color: 0xffd24a });
       }
     }
@@ -557,7 +563,7 @@ export class Sim {
         this.pushOut(rt);
         rt.mt = undefined;
         if (ab.dmg) {
-          const t = this.enemies(rt, u.x, u.z, 7).sort((a, b) => dist(a.u, u) - dist(b.u, u))[0];
+          const t = this.enemies(rt, u.x, u.z, 7).filter(e => this.targetableBy(e, rt)).sort((a, b) => dist(a.u, u) - dist(b.u, u))[0];
           if (t) this.homing(rt, t, 30, ab.fx, ab.color ?? 0xffffff, () => this.hit(rt, t, ab));
         }
         break;
@@ -622,7 +628,7 @@ export class Sim {
   }
 
   onHitPassives(rt: RT, t: RT, ability: boolean) {
-    if (!rt.c || !t.c) { if (rt.c?.id === "darius") this.dot(t, 20 + 4 * rt.u.level, 5, rt, "phys"); return; }
+    if (!rt.c || !t.c) { if (rt.c?.id === "darius" && !this.isStruct(t)) this.dot(t, 20 + 4 * rt.u.level, 5, rt, "phys"); return; }
     switch (rt.c.id) {
       case "ezreal": if (ability) rt.ez = { n: Math.min(5, rt.ez.until > this.now ? rt.ez.n + 1 : 1), until: this.now + 6 }; break;
       case "karma": if (ability) rt.u.cds[3] = Math.max(0, rt.u.cds[3] - 2); break;
@@ -680,7 +686,7 @@ export class Sim {
     if (u.scds[slot] > 0 || !SPELLS[key]) return;
     if (u.dead !== (key === "revive")) return;
     if (key !== "cleanse" && !this.canAct(rt)) return;
-    const done = () => { u.scds[slot] = SPELLS[key].cd; this.fx("spell", { id, spell: key, x: u.x, z: u.z, tx: x, tz: z }); };
+    const done = () => { u.scds[slot] = SPELLS[key].cd; rt.recallT = 0; this.fx("spell", { id, spell: key, x: u.x, z: u.z, tx: x, tz: z }); };
     let dx = x - u.x, dz = z - u.z;
     const len = Math.hypot(dx, dz) || 1;
     dx /= len; dz /= len;
@@ -725,6 +731,7 @@ export class Sim {
       }
       case "siesta": rt.siestaUntil = this.now + 3; rt.mt = undefined; rt.target = undefined; break;
       case "rocket": {
+        if (!this.canMove(rt)) return;
         rt.dash = { tx: u.x + dx * 15, tz: u.z + dz * 15, speed: 36, hit: new Set(), onHit: t => { this.damage(rt, t, 60 + 20 * u.level, "magic"); this.dot(t, 40 + 10 * u.level, 2, rt); } };
         rt.mt = undefined;
         break;
@@ -783,14 +790,21 @@ export class Sim {
     u.z += (dz / d) * step;
     u.rot = Math.atan2(dx, dz);
     u.moving = true;
+    const bx = u.x, bz = u.z;
     this.pushOut(rt);
+    const px = u.x - bx, pz = u.z - bz;
+    if (Math.hypot(px, pz) > step * 0.5) { // walked head-on into a structure: slide along it
+      const k = (pz * dx - px * dz >= 0 ? 1 : -1) * step / d;
+      u.x += -dz * k; u.z += dx * k;
+      this.pushOut(rt);
+    }
     return d - step <= stopAt;
   }
 
   // ---------------------------------------------------------------- attacks
   attackLogic(rt: RT, dt: number) {
     const t = this.rt.get(rt.target ?? "");
-    if (!t || !this.targetableBy(t, rt) || (rt.c && t.u.rune === "npc" && this.now - t.combatT < 2 && t.combatT > 0 && t.c && !this.has(rt, "taunt"))) {
+    if (!t || !this.targetableBy(t, rt)) {
       if (!this.has(rt, "taunt")) rt.target = undefined;
       return false;
     }
@@ -800,7 +814,7 @@ export class Sim {
       return true;
     }
     rt.u.rot = Math.atan2(t.u.x - rt.u.x, t.u.z - rt.u.z);
-    if (rt.atkT > 0) return true;
+    if (rt.atkT > 0 || rt.c && t.c && t.u.rune === "npc" && this.now - t.combatStart < 2 && !this.has(rt, "taunt")) return true; // NPC: hold the swing, keep the target
     rt.atkT = 1 / Math.max(0.2, rt.u.as || MINIONS[rt.u.kind as MinionKind]?.as || 1);
     this.basicAttack(rt, t);
     return true;
@@ -836,7 +850,7 @@ export class Sim {
     if (ranged) {
       const col = u.kind === "tower" ? (u.team ? 0xff5040 : 0x40a0ff) : rt.c?.accent ?? 0xffffff;
       this.homing(rt, t, u.kind === "tower" ? 22 : 28, u.kind === "tower" ? "tower" : u.kind === "caster" ? "baguette" : u.kind === "cannon" ? "cannonball" : rt.c?.id === "mortadelo" ? "slipper" : "atk", col, land);
-      if (u.kind === "tower") this.fx("bell", { x: u.x, z: u.z });
+      if (u.kind === "tower") this.fx("towershot", { x: u.x, z: u.z });
     } else land();
   }
 
@@ -932,7 +946,8 @@ export class Sim {
     if (rt.manicNext && rt.manicNext <= now && rt.buffs.some(b => b.dmgMult === 1)) { rt.manicNext = now + 2; rt.manicInv = Math.random() < 0.5; if (rt.manicInv) this.fx("text", { id: rt.id, text: "🙃 CONTROLES INVERTIDOS" }); }
     // Amogus
     if (u.rune === "amogus") {
-      rt.stillT = u.moving || rt.target ? 0 : rt.stillT + dt;
+      rt.stillT = rt.mt || rt.target || rt.dash || rt.pending ? 0 : rt.stillT + dt;
+      if (!rt.stillT) rt.amogus = false; // moving or attacking drops the disguise
       if (rt.stillT > 2 && !rt.amogus) { rt.amogus = true; this.fx("text", { id: rt.id, text: "📮 ඞ" }); }
     }
     // visual flags
@@ -1051,7 +1066,7 @@ export class Sim {
           for (const t of this.enemies(p.owner, p.x, p.z, p.radius)) {
             if (p.hit!.has(t.id) || t.u.kind === "mercadona") continue;
             p.hit!.add(t.id);
-            if (t.spellshield > this.now) { t.spellshield = 0; this.fx("text", { id: t.id, text: "🥖 ¡ESQUIVADO!" }); done = true; break; }
+            if (t.spellshield > this.now) { t.spellshield = 0; this.fx("text", { id: t.id, text: "🥖 ¡ESQUIVADO!" }); if (p.pierce) continue; done = true; break; }
             p.onHit(t);
             if (!p.pierce) { done = true; break; }
           }

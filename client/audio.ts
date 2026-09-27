@@ -62,6 +62,7 @@ export function sfx(name: string, v = 1) {
     case "buy": tone(1568, 0.1, "square", 0.08 * v); tone(2093, 0.25, "square", 0.08 * v, 0.1); break;
     case "stonks": [0, 0.35, 0.7].forEach(a => [880, 1320, 1760].forEach(f => tone(f, 0.3, "sine", 0.12 * v, a))); break;
     case "wasted": tone(220, 1.8, "sawtooth", 0.2 * v, 0, sfxBus, 55); noise(1.2, 0.2 * v, 400, 0.1); break;
+    case "towershot": tone(160, 0.35, "sine", 0.22 * v, 0, sfxBus, 55); noise(0.25, 0.12 * v, 500, 0, sfxBus, 0.8, "lowpass"); break; // deep arcane thump
     case "slam": noise(0.3, 0.4 * v, 200, 0, sfxBus, 1, "lowpass"); tone(120, 0.3, "sine", 0.3 * v, 0, sfxBus, 50); break;
     case "firework": noise(0.25, 0.3 * v, 2500); tone(1600, 0.4, "sine", 0.05 * v, 0, sfxBus, 400); break;
     case "jingle": notes([[659, 2], [587, 1], [523, 2], [0, 1], [659, 2], [587, 1], [523, 3]], "triangle", 0.25 * v, 0.18); break;

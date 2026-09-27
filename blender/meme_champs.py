@@ -1,4 +1,5 @@
 # Builds the meme champion models and exports them to client/public/models/<id>.glb.
+# Kanye is not built here: blender/kanye_donda.py rigs a Sketchfab model instead.
 # Run: blender -b --python blender/meme_champs.py   (or exec() it through the Blender MCP)
 #
 # GLB contract: root <id> -> "body" armature (identity, feet at origin) with bones root/hips/spine/head/arm_L/arm_R/leg_L/leg_R;
@@ -8,6 +9,7 @@
 import bpy, bmesh, math, os
 from mathutils import Euler, Matrix, Vector
 
+SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 OUT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "client", "public", "models"))
 TAU = math.tau
 
@@ -229,30 +231,6 @@ def torrente(body, root):
     part("badge", prism(star(6, 0.17, 0.11), 0.03), 0xe8c14c, badge, (0, 0, -0.6), emit=0x443300)
     part("badgeshield", cyl(0.075, 0.075, 0.036, 14), 0x1a3a8a, badge, (0, 0, -0.6))
 
-def kanye(body, root):
-    SKIN, HOOD, PANTS = 0x7a4a2a, 0x222222, 0x4a4a48
-    legs(PANTS, 0x9a9488, hip=0.56, r=0.105, shoe_scale=1.2)  # chunky yeezys
-    mirror(lambda s: part("sole", box(0.2, 0.36, 0.05, 0.02), 0xe8e2d0, "leg_L" if s < 0 else "leg_R", (0.14 * s, -0.06, 0.025)))
-    part("torso", lathe([(0, 0.5), (0.33, 0.52), (0.36, 0.7), (0.37, 0.95), (0.33, 1.12), (0.2, 1.2), (0, 1.21)], 16), HOOD, body)
-    part("pocket", box(0.36, 0.04, 0.16, 0.02), 0x2c2c2c, body, (0, -0.35, 0.7))
-    part("hood", torus(0.2, 0.08, 16, 8), HOOD, body, (0, 0.06, 1.2), rot=(0.35, 0, 0))
-    mirror(lambda s: part("string", cyl(0.012, 0.012, 0.22, 4), 0xdddddd, body, (0.07 * s, -0.33, 1.02)))
-    chain(body, 1.13, 0.24, cyl(0.07, 0.07, 0.02, 12))
-    HZ = 1.47
-    face(body, HZ, SKIN, head_r=0.25)
-    part("fade", sphere(0.27, 16, 10), 0x0f0f0f, body, (0, 0.03, HZ + 0.05), scale=(1, 1, 0.72))
-    part("beard", sphere(0.2, 14, 8), 0x0f0f0f, body, (0, -0.06, HZ - 0.12), scale=(1.15, 1.0, 0.7))
-    part("mouth", box(0.1, 0.02, 0.02), 0x3a1a10, body, (0, -0.25, HZ - 0.1))
-    # shutter shades
-    part("shade", box(0.36, 0.03, 0.09, 0.01), 0x111111, body, (0, -0.25, HZ + 0.04))
-    for i in range(3): part("slat", box(0.34, 0.035, 0.012), 0x33c3ff, body, (0, -0.265, HZ + 0.015 + i * 0.028), emit=0x114466, smooth=False)
-    part("halo", torus(0.25, 0.03, 24, 6), 0xffe04a, body, (0, 0, 1.88), emit=0xaa8800)
-    aL = arm(-0.43, 1.1, HOOD, SKIN)
-    aR = arm(0.43, 1.1, HOOD, SKIN)
-    part("phone", box(0.1, 0.02, 0.18, 0.012), 0x111111, aR, (0, -0.08, -0.52))
-    part("screen", box(0.085, 0.01, 0.15), 0x33c3ff, aR, (0, -0.095, -0.52), emit=0x114466, smooth=False)
-    part("mic", cyl(0.025, 0.03, 0.18, 8), 0x222222, aL, (0, -0.05, -0.5), rot=(0.4, 0, 0))
-    part("micball", sphere(0.06, 10, 8), 0x999999, aL, (0, -0.1, -0.4))
 
 def epstein(body, root):
     SKIN, SUIT, SHIRT = 0xe8c0a0, 0x1c2240, 0xf2f2f2
@@ -492,25 +470,6 @@ def torrente_anim(c):
               22: {"arm_L": (-170, 85, 0), "arm_R": (-170, -85, 0), "spine": (-12, 0, 0), "head": (-28, 0, 0), "@hips": (0, 0, 0.05)}, 30: {}}),
     )
 
-def kanye_anim(c):
-    c["idle"] = (60, {f: {"head": (-10 if i % 2 else 5, 0, 0), "arm_L": (-115, 0, 40), "arm_R": (-10 if i % 2 else 5, -4, 0),
-                          "@hips": (0, 0, -0.02 if i % 2 else 0)} for i, f in enumerate(range(0, 61, 10))})
-    tweak(c, "cast", 6, arm_L=(-100, 80, 0), arm_R=(-100, -80, 0), head=(-25, 0, 0))  # messiah pose
-    sprint = {"spine": (32, 0, 0), "head": (-22, 0, 0), "arm_L": (65, 20, 0), "arm_R": (65, -20, 0), "@hips": (0, 0, -0.06)}
-    spells(c,
-        # Q Tweet Polémico: overhand phone throw
-        (15, {0: {}, 4: {"arm_R": (65, -20, 0), "spine": (-5, 0, 22), "arm_L": (-35, 0, 0)},
-              7: {"arm_R": (-135, 0, -10), "spine": (16, 0, -22), "head": (6, 0, 0), "arm_L": (25, 0, 0)}, 15: {}}),
-        # W Yeezy Drop: point at the sky, then slam the sneakers down
-        (18, {0: {}, 5: {"arm_R": (-172, -8, 0), "arm_L": (-20, 15, 0), "head": (-30, 0, 0), "spine": (-8, 0, 0)},
-              10: {"arm_R": (-55, 0, 0), "arm_L": (-40, 0, 0), "spine": (18, 0, 0), "head": (12, 0, 0), "@hips": (0, 0, -0.1)}, 18: {}}),
-        # E I Wonder Dash: ninja sprint, arms trailing
-        (12, {0: {}, 3: {**sprint, "leg_L": (-45, 0, 0), "leg_R": (30, 0, 0)}, 6: {**sprint, "leg_L": (30, 0, 0), "leg_R": (-45, 0, 0)},
-              9: {**sprint, "leg_L": (-45, 0, 0), "leg_R": (30, 0, 0)}, 12: {}}),
-        # R Episodio Maníaco: arms flung wide, face to the heavens
-        (30, {0: {}, 8: {"arm_L": (-15, 110, 0), "arm_R": (-15, -110, 0), "head": (-35, 0, 0), "spine": (-12, 0, 0), "@hips": (0, 0, 0.15)},
-              22: {"arm_L": (-25, 115, 0), "arm_R": (-25, -115, 0), "head": (-38, 0, 0), "spine": (-14, 0, 0), "@hips": (0, 0, 0.2)}, 30: {}}),
-    )
 
 def epstein_anim(c):
     tweak(c, "idle", 30, head=(4, 0, 10), arm_R=(-30, 0, 0))
@@ -582,7 +541,7 @@ def filemon_anim(c):
         (27, {0: {}, 5: swing(-170, -15), 8: swing(-55, 28), 20: swing(-50, 20), 27: {}}),
     )
 
-CHAMPS = {"torrente": (torrente, torrente_anim), "kanye": (kanye, kanye_anim), "epstein": (epstein, epstein_anim),
+CHAMPS = {"torrente": (torrente, torrente_anim), "epstein": (epstein, epstein_anim),
           "diddy": (diddy, diddy_anim), "mortadelo": (mortadelo, mortadelo_anim)}
 
 def build(cid):
@@ -612,47 +571,72 @@ def export(cid):
 
 # ---------------------------------------------------------------- ability props (fx.glb)
 # One node per prop, named as the client looks it up (client/models.ts fxModel). Base on the ground or centred as noted.
+def sketch(fname, rot=(0, 0, 0), length=1.0, width=None, ground=False, pick=None, ratio=1.0, fatten=0.0, color=None, emit=None, axis=1, keep=None, drop=None, at=(0, 0, 0)):
+    """Sketchfab prop from blender/src/<fname>.glb (credits in blender/src/CREDITS.txt) as parts: rotated (degrees), scaled so
+    its extent along `axis` (0 x, 1 y, 2 z) is `length` (X to `width` if given), centred, base at z=0 if `ground`, then moved
+    to `at`. keep/drop: mesh-name substrings to keep only / remove; pick: keep only the largest mesh. Returns the meshes."""
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=os.path.join(SRC, fname + ".glb"))
+    new = [o for o in bpy.data.objects if o not in before]
+    ms = [o for o in new if o.type == "MESH"]
+    for o in ms:
+        mw = o.matrix_world.copy(); o.parent = None; o.data = o.data.copy(); o.data.transform(mw); o.matrix_world = Matrix()
+        o.shape_key_clear()  # rigged sources (tentacle) come in bind pose; props are static
+        for md in list(o.modifiers): o.modifiers.remove(md)
+    for o in new:
+        if o.type != "MESH": bpy.data.objects.remove(o)
+    for o in [o for o in ms if (keep and not any(k in o.name for k in keep)) or (drop and any(k in o.name for k in drop))]:
+        ms.remove(o); bpy.data.objects.remove(o)
+    if pick:
+        big = max(ms, key=lambda o: len(o.data.vertices))
+        for o in ms:
+            if o is not big: bpy.data.objects.remove(o)
+        ms = [big]
+    R = Euler([math.radians(x) for x in rot]).to_matrix().to_4x4()
+    for o in ms: o.data.transform(R)
+    pts = [v.co for o in ms for v in o.data.vertices]
+    lo = Vector([min(p[i] for p in pts) for i in range(3)]); hi = Vector([max(p[i] for p in pts) for i in range(3)])
+    sy = length / (hi[axis] - lo[axis])
+    S = Matrix.Diagonal((width / (hi.x - lo.x) if width else sy, sy, sy, 1))
+    T = Matrix.Translation(at) @ S @ Matrix.Translation(-Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z if ground else (lo.z + hi.z) / 2)))
+    for o in ms:
+        COLL.objects.link(o) if o.name not in COLL.objects else None
+        o.data.transform(T)
+        if ratio < 1:
+            d = o.modifiers.new("dec", "DECIMATE"); d.ratio = ratio
+            bpy.context.view_layer.objects.active = o; bpy.ops.object.modifier_apply(modifier="dec")
+        if fatten:  # thin strands vanish at MOBA camera distance: push them out along their normals
+            for v in o.data.vertices: v.co += v.normal * fatten
+        if color is not None: o.data.materials.clear(); o.data.materials.append(mat(color, emit))
+        for m in o.data.materials:  # toon shading only reads the base colour map: drop normal/roughness maps from the export
+            t = m.node_tree
+            emit = next((l.from_node for l in t.links if l.to_node.type == "BSDF_PRINCIPLED" and l.to_socket.name == "Emission Color" and l.from_node.type == "TEX_IMAGE"), None)
+            if emit:  # unlit-style sources keep their colour in the emission map and leave the base colour white
+                bsdf = next(n for n in t.nodes if n.type == "BSDF_PRINCIPLED"); t.links.new(emit.outputs["Color"], bsdf.inputs["Base Color"])
+            for l in [l for l in t.links if l.to_node.type == "BSDF_PRINCIPLED" and l.to_socket.name != "Base Color"]: t.links.remove(l)
+            for n in t.nodes:  # unlinked glTF metallic defaults to 1: chrome in previews
+                if n.type == "BSDF_PRINCIPLED": n.inputs["Metallic"].default_value, n.inputs["Roughness"].default_value = 0, 0.8
+        CUR["parts"].append((o, "auto", 0))
+    return ms
+
 def fx_phone():  # Kanye Q projectile, lying flat, centred
-    part("case", box(0.26, 0.48, 0.035, 0.014), 0x111111)
-    part("screen", box(0.22, 0.42, 0.01), 0x33c3ff, loc=(0, 0, 0.02), emit=0x1a88cc, smooth=False)
-    for r in (0.7, -0.7): part("logo", box(0.2, 0.025, 0.01), 0xffffff, loc=(0, 0, 0.027), rot=(0, 0, r), emit=0xaaaaaa, smooth=False)
-    part("cam", cyl(0.025, 0.025, 0.03, 10), 0x333333, loc=(0.07, 0.17, -0.02))
+    sketch("fx_phone", rot=(90, 0, 0), length=0.48)
 
 def fx_envelope():  # Epstein Q projectile, lying flat, centred
-    part("paper", box(0.52, 0.36, 0.025, 0.005), 0xffd24a, emit=0x664400)
-    part("flap", prism([(-0.26, 0.18), (0.26, 0.18), (0, -0.04)], 0.01), 0xe0b030, loc=(0, 0, 0.016), emit=0x553300)
-    part("seal", cyl(0.055, 0.06, 0.02, 14), 0xb01a1a, loc=(0, -0.03, 0.025))
-    part("isle", sphere(0.025, 8, 6), 0x3aa04a, loc=(0, -0.03, 0.037), scale=(1, 1, 0.4))
+    sketch("fx_envelope", drop=["stand"], axis=0, length=0.52)
 
-def fx_sneaker():  # Kanye W: giant Yeezy dropped from the sky, 1 unit long, sole on the ground
-    part("sole", box(0.38, 1.0, 0.12, 0.05), 0xe8e2d0, loc=(0, 0, 0.06))
-    for i in range(5): part("tread", box(0.4, 0.05, 0.03), 0xc9c2ae, loc=(0, -0.4 + i * 0.2, 0.02))
-    part("upper", sphere(1, 16, 10), 0x8a857c, loc=(0, 0.06, 0.24), scale=(0.18, 0.46, 0.2))
-    part("toe", sphere(1, 12, 8), 0x8a857c, loc=(0, -0.3, 0.17), scale=(0.18, 0.22, 0.12))
-    mirror(lambda s: part("stripe", box(0.02, 0.55, 0.05), 0x5c5850, loc=(0.175 * s, 0.05, 0.24)))
-    part("collar", torus(0.12, 0.035, 16, 6), 0x3a3834, loc=(0, 0.25, 0.43), scale=(1, 1.3, 1))
-    part("heeltab", box(0.1, 0.04, 0.16, 0.015), 0xff7a1a, loc=(0, 0.5, 0.38))
-    for i in range(4): part("lace", capsule(0.02, 0.14), 0xe8e2d0, loc=(0, -0.12 + i * 0.07, 0.42 - i * 0.005), rot=(0, math.pi / 2, 0))
+def fx_sneaker():  # Kanye W: giant Yeezy dropped from the sky, 1 unit long, sole on the ground, toe at -Y
+    sketch("fx_yeezy", rot=(0, 0, 180), length=1.0, ground=True, ratio=0.35)
 
 def fx_bolt():  # Kanye E dash trail: lightning lying on the ground from the origin forward (-Y), 2 units long
-    pts = [(0.16, 0.0), (-0.14, -0.9), (0.08, -0.9), (-0.24, -2.0), (0.3, -0.72), (0.07, -0.72), (0.36, 0.0)]
-    part("bolt", prism([(x - 0.11, y) for x, y in pts], 0.05), 0xffe04a, loc=(0, 0, 0.05), emit=0xffcc00, smooth=False)
+    sketch("fx_bolt", rot=(90, 0, 0), length=2.0, width=0.9, pick=True, fatten=0.035, color=0xfff2a0, emit=0xffcc00)
+    for o, _, _ in CUR["parts"]: o.data.transform(Matrix.Translation((0, -1.0, 0.1)) @ Matrix.Diagonal((1, 1, 0.2, 1)))  # flat decal, base at the origin, tip at y=-2
 
 def fx_briefcase():  # Epstein E: the evidence case left inside the smoke, on the ground
-    part("case", box(0.62, 0.18, 0.44, 0.03), 0x5a3a1a, loc=(0, 0, 0.22))
-    part("handle", torus(0.09, 0.022, 12, 5, 0.5), 0x2a1a0a, loc=(0, 0, 0.44), rot=(math.pi / 2, 0, 0))
-    mirror(lambda s: part("clasp", box(0.06, 0.02, 0.05), 0xd4af37, loc=(0.18 * s, -0.095, 0.4), emit=0x332200))
-    part("classified", box(0.42, 0.01, 0.07), 0xc0392b, loc=(0, -0.095, 0.2))
-    for i, (x, r) in enumerate(((-0.15, -0.3), (0.05, 0.15), (0.2, 0.4))):
-        part("paper", box(0.2, 0.01, 0.26), 0xf8f8f0, loc=(x, 0.02, 0.5 + i * 0.02), rot=(0.2, r, 0), smooth=False)
+    sketch("fx_briefcase", keep=["Closed"], axis=0, length=0.62, ground=True)
 
 def fx_cctv():  # Epstein R: the prison camera that "malfunctioned", centred, looking forward
-    part("body", box(0.22, 0.46, 0.2, 0.025), 0xd8d8d0)
-    part("hood", box(0.26, 0.5, 0.03, 0.01), 0x9a9a92, loc=(0, -0.02, 0.115))
-    part("lens", cyl(0.07, 0.08, 0.06, 14), 0x111111, loc=(0, -0.25, 0), rot=(math.pi / 2, 0, 0))
-    part("led", sphere(0.025, 8, 6), 0xff2020, loc=(0.07, -0.235, 0.06), emit=0xff0000)
-    part("arm", box(0.05, 0.3, 0.05), 0x777770, loc=(0, 0.35, 0.12), rot=(-0.5, 0, 0))
-    part("plate", box(0.2, 0.03, 0.2), 0x777770, loc=(0, 0.48, 0.24))
+    sketch("fx_cctv", length=0.75)
 
 def fx_tanktop():  # Torrente R: the ripped wifebeater flying off, centred
     part("tank", lathe([(0.36, -0.3), (0.42, -0.05), (0.38, 0.15), (0.3, 0.28)], 18, caps=False), 0xf1f1e0, scale=(1, 0.7, 1))
@@ -661,9 +645,7 @@ def fx_tanktop():  # Torrente R: the ripped wifebeater flying off, centred
     part("rip", prism([(0, 0), (0.08, -0.25), (-0.06, -0.12), (0.03, -0.4), (-0.12, -0.1)], 0.02), 0x5a6b4a, loc=(0.05, -0.29, 0.15), rot=(math.pi / 2, 0, 0))
 
 def fx_oilbottle():  # Diddy Q: thrown bottle, centred
-    part("bottle", lathe([(0, -0.22), (0.11, -0.22), (0.12, 0.08), (0.06, 0.16), (0.04, 0.22), (0, 0.22)], 14), 0xfff7c0, alpha=0.8)
-    part("label", cyl(0.123, 0.123, 0.12, 14), 0xff9ec8, loc=(0, 0, -0.07))
-    part("cap", cyl(0.045, 0.045, 0.07, 10), 0x3aa0ff, loc=(0, 0, 0.26))
+    sketch("fx_oilbottle", axis=2, length=0.5)
 
 def fx_puddle():  # Diddy Q: slippery puddle, radius ~1, flat on the ground (client scales to the ability radius)
     blob = [((1 + 0.12 * math.sin(3 * a) + 0.07 * math.sin(7 * a + 1)) * math.cos(a), (1 + 0.12 * math.sin(3 * a) + 0.07 * math.sin(7 * a + 1)) * math.sin(a)) for a in (i / 40 * TAU for i in range(40))]
@@ -671,84 +653,89 @@ def fx_puddle():  # Diddy Q: slippery puddle, radius ~1, flat on the ground (cli
     for x, y, r in ((-0.3, 0.2, 0.18), (0.35, -0.25, 0.12), (0.1, 0.45, 0.08)): part("glint", cyl(r, r, 0.01, 12), 0xffffff, loc=(x, y, 0.035), alpha=0.8)
 
 def fx_speaker():  # Diddy W: speaker stack on the ground
-    part("cab", box(0.72, 0.56, 1.5, 0.03), 0x151515, loc=(0, 0, 0.75))
-    for z, r in ((0.42, 0.24), (0.95, 0.24), (1.32, 0.09)):
-        part("cone", cyl(r, r * 0.6, 0.05, 18), 0x444444, loc=(0, -0.29, z), rot=(math.pi / 2, 0, 0))
-        part("dust", cyl(r * 0.3, r * 0.3, 0.06, 12), 0x222222, loc=(0, -0.3, z), rot=(math.pi / 2, 0, 0))
-    part("led", box(0.6, 0.02, 0.04), 0xd46bff, loc=(0, -0.29, 1.47), emit=0xa030ff, smooth=False)
+    sketch("fx_speaker", axis=0, length=1.4, ground=True)
 
 def fx_vip():  # Diddy W: VIP stanchions + velvet rope around a radius-3.2 zone (the party radius)
-    R, n = 3.2, 10
-    pts = [(R * math.cos(i / n * TAU), R * math.sin(i / n * TAU)) for i in range(n)]
-    for x, y in pts:
-        part("post", cyl(0.035, 0.04, 0.9, 10), 0xd4af37, loc=(x, y, 0.45), emit=0x332200)
-        part("knob", sphere(0.06, 10, 8), 0xd4af37, loc=(x, y, 0.92), emit=0x332200)
-        part("base", cyl(0.14, 0.14, 0.04, 14), 0xd4af37, loc=(x, y, 0.02), emit=0x332200)
-    for i in range(n):
-        (x0, y0), (x1, y1) = pts[i], pts[(i + 1) % n]
-        segs = 6
-        for j in range(segs):
-            t0, t1 = j / segs, (j + 1) / segs
-            p0 = Vector((x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0, 0.85 - 0.25 * math.sin(math.pi * t0)))
-            p1 = Vector((x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1, 0.85 - 0.25 * math.sin(math.pi * t1)))
-            d = p1 - p0
-            bm = cyl(0.03, 0.03, d.length + 0.01, 8)
-            bm.transform(Matrix.Translation((p0 + p1) / 2) @ d.to_track_quat("Z", "Y").to_matrix().to_4x4())
-            part("rope", bm, 0xa01030)
+    a = 3.2 * math.cos(math.pi / 6)  # hexagon of rope segments, side = circumradius = 3.2
+    seg = sketch("fx_vip", axis=0, length=3.2, ground=True)
+    for o in seg:
+        for i in range(1, 6):
+            c = o.copy(); c.data = o.data.copy(); COLL.objects.link(c); CUR["parts"].append((c, "auto", 0))
+            c.data.transform(Matrix.Rotation(i * math.pi / 3, 4, "Z") @ Matrix.Translation((0, -a, 0)))
+        o.data.transform(Matrix.Translation((0, -a, 0)))
 
 def fx_discoball():  # Diddy R: mirror ball, centred, hanging chain going up
-    part("ball", sphere_split(1.1, 24, 16, lambda i: i % 5 != 0), 0xd8d8e8, emit=0x404050, smooth=False)
-    part("tiles", sphere_split(1.1, 24, 16, lambda i: i % 5 == 0), 0xff3cac, emit=0xcc2080, smooth=False)
+    sketch("fx_discoball", length=2.2)
     part("cap", cyl(0.2, 0.12, 0.2, 12), 0x888888, loc=(0, 0, 1.15))
     part("chain", cyl(0.03, 0.03, 4, 6), 0x888888, loc=(0, 0, 3.2))
 
 def fx_plant():  # Mortadelo Q: the potted-plant disguise (with Mortadelo peeking out), on the ground
-    part("pot", lathe([(0, 0), (0.3, 0), (0.4, 0.5), (0, 0.5)], 16), 0xb5542a)
-    part("rim", torus(0.42, 0.05, 20, 6), 0xa04a22, loc=(0, 0, 0.52))
-    part("soil", cyl(0.4, 0.4, 0.04, 16), 0x3a2410, loc=(0, 0, 0.52))
-    for x, y, z, r in ((0, 0, 1.05, 0.5), (0.35, 0.1, 0.9, 0.35), (-0.35, 0.05, 0.92, 0.38), (0.1, 0.25, 1.4, 0.35), (-0.15, -0.1, 1.45, 0.3)):
-        part("leaves", sphere(r, 12, 8), 0x3a9a3a, loc=(x, y, z))
-    for x, z in ((0.2, 1.62), (-0.3, 1.3), (0.4, 1.2)): part("flower", sphere(0.07, 8, 6), 0xff5a8a, loc=(x, -0.2, z))
+    sketch("fx_plant", axis=2, length=1.8, ground=True)
     mirror(lambda s: part("glass", torus(0.075, 0.015, 14, 5), 0x111111, loc=(0.1 * s, -0.47, 1.12), rot=(math.pi / 2, 0, 0)))
     mirror(lambda s: part("eye", sphere(0.035, 8, 6), 0x111111, loc=(0.1 * s, -0.46, 1.12)))
     part("nose", lathe([(0.06, 0), (0.065, 0.18), (0.055, 0.3), (0, 0.33)], 10), 0xf1c27d, loc=(0, -0.45, 1.05), rot=(math.pi / 2 + 0.3, 0, 0))
 
 def fx_bull():  # Mortadelo Q: cheap bull costume he wears for the charge, on the ground, facing forward
-    DARK = 0x3a2418
-    part("body", sphere(1, 16, 10), DARK, loc=(0, 0.1, 1.0), scale=(0.5, 0.9, 0.48))
-    part("head", sphere(1, 14, 10), DARK, loc=(0, -0.85, 1.2), scale=(0.3, 0.36, 0.3))
-    part("snout", sphere(1, 12, 8), 0xd89a8a, loc=(0, -1.13, 1.1), scale=(0.22, 0.14, 0.16))
-    part("ring", torus(0.07, 0.015, 12, 5), 0xd4af37, loc=(0, -1.26, 1.03), rot=(math.pi / 2, 0, 0), emit=0x332200)
-    mirror(lambda s: part("horn", cyl(0.06, 0.0, 0.4, 10), 0xf1e6c8, loc=(0.3 * s, -0.85, 1.45), rot=(0, s, 0)))
-    mirror(lambda s: part("glass", torus(0.07, 0.014, 14, 5), 0x111111, loc=(0.11 * s, -1.08, 1.3), rot=(math.pi / 2, 0, 0)))
-    for x, y in ((-0.28, -0.5), (0.28, -0.5), (-0.28, 0.6), (0.28, 0.6)):
-        part("leg", cyl(0.09, 0.08, 0.7, 10), DARK, loc=(x, y, 0.35))
-        part("hoof", cyl(0.1, 0.1, 0.08, 10), 0x111111, loc=(x, y, 0.04))
-    part("tail", cyl(0.02, 0.02, 0.6, 6), DARK, loc=(0, 1.0, 0.8), rot=(0.5, 0, 0))
-    part("zip", box(0.03, 1.4, 0.03), 0xd4af37, loc=(0, 0.1, 1.47), emit=0x332200)  # it's a costume
+    sketch("fx_bull", length=2.4, ground=True)
 
 def fx_bombbox():  # Mortadelo Q: T.I.A. bomb box that goes off after 1s, on the ground
-    part("box", box(0.7, 0.7, 0.6, 0.02), 0xc8a060, loc=(0, 0, 0.3))
-    part("tape", box(0.72, 0.14, 0.61), 0xa88a50, loc=(0, 0, 0.3))
-    part("label", box(0.36, 0.01, 0.16), 0xd33b2c, loc=(0, -0.355, 0.32))
-    for x in (-0.12, 0, 0.12): part("tnt", cyl(0.055, 0.055, 0.45, 10), 0xc0202a, loc=(x, 0, 0.66), rot=(math.pi / 2, 0, 0))
-    part("fuse", torus(0.15, 0.012, 12, 4, 0.5), 0x222222, loc=(0, 0.1, 0.72), rot=(0, math.pi / 2, 0))
-    part("spark", sphere(0.06, 8, 6), 0xffa020, loc=(0, 0.1, 0.87), emit=0xff7000)
+    sketch("fx_bomb", axis=2, length=0.9, ground=True)
 
 def fx_flask():  # Mortadelo W: Professor Bacterio's flask, centred
-    part("glass", lathe([(0, -0.2), (0.12, -0.18), (0.19, -0.05), (0.15, 0.08), (0.06, 0.13), (0.055, 0.32), (0.07, 0.34), (0, 0.34)], 16), 0xcfeaff, alpha=0.4)
-    part("brew", lathe([(0, -0.18), (0.11, -0.16), (0.17, -0.05), (0.14, 0.04), (0, 0.04)], 16), 0x55ff55, emit=0x22aa22)
-    part("cork", cyl(0.05, 0.045, 0.08, 10), 0x9a6a3a, loc=(0, 0, 0.38))
-    for x, z in ((0.05, -0.05), (-0.06, -0.1)): part("bubble", sphere(0.025, 6, 4), 0xccffcc, loc=(x, -0.14, z), emit=0x66aa66)
+    sketch("fx_flask", keep=["big"], axis=2, length=0.55)
 
 def fx_badge():  # Torrente W: big police badge floating over the taunted target, facing forward, centred
-    part("star", prism(star(6, 0.5, 0.32), 0.06), 0xe8c14c, rot=(math.pi / 2, 0, 0), emit=0x443300)
-    part("shield", cyl(0.22, 0.22, 0.08, 20), 0x1a3a8a, rot=(math.pi / 2, 0, 0))
-    part("crest", prism(star(5, 0.12, 0.05), 0.09), 0xe8c14c, rot=(math.pi / 2, 0, 0), emit=0x443300)
+    sketch("fx_badge", axis=2, length=1.0)
+
+# LoL champion props (client/game.ts CAST_PROPS, keyed by champion + slot)
+def fx_tibbers():  # Annie R: Tibbers, on the ground, facing forward
+    sketch("fx_tibbers", axis=2, length=2.6, ground=True)
+
+def fx_garensword():  # Garen E/R: Demacian greatsword, point down, tip on the ground
+    sketch("fx_garensword", rot=(90, 0, 0), axis=2, length=3.2, ground=True)
+
+def fx_dariusaxe():  # Darius Q/R: the Noxian axe, centred
+    sketch("fx_dariusaxe", axis=0, length=2.0)
+
+def fx_grenade():  # Jhin Q: Dancing Grenade, centred
+    sketch("fx_grenade", axis=2, length=0.55)
+
+def fx_fireball():  # Annie Q: fireball, centred
+    sketch("fx_fireball", length=0.8)
+
+def fx_baguette():  # caster pigeon projectile, lying along Y, centred
+    sketch("fx_baguette", length=0.75)
+
+def fx_slipper():  # Filemón's thrown slipper, lying flat, centred
+    sketch("fx_slipper", pick=True, length=0.45)
+
+def fx_trap():  # Caitlyn W: Yordle Snap Trap, on the ground
+    sketch("fx_trap", axis=0, length=1.3, ground=True)
+
+def fx_lotus():  # Jhin E / Karma R: lotus on its stem, on the ground
+    sketch("fx_lotus", axis=2, length=1.3, ground=True)
+
+def fx_runestones():  # Ryze W: Rune Prison stones, on the ground
+    sketch("fx_runestones", axis=0, length=2.6, ground=True)
+
+def fx_scroll():  # Ryze E: Spell Flux scroll, centred
+    sketch("fx_scroll", axis=2, length=1.1)
+
+def fx_tentacle():  # Illaoi Q/R: tentacle rising out of the ground
+    for o in sketch("fx_tentacle", axis=2, length=3.2, ground=True, pick=True, ratio=0.3):
+        for v in o.data.vertices:  # the source is a thin, straight bind pose: thicken it and curl it forward
+            h = v.co.z / 3.2
+            v.co.x *= 4; v.co.y = v.co.y * 4 - 1.1 * h * h
+
+def fx_idol():  # Illaoi E: the idol, on the ground
+    sketch("fx_idol", axis=2, length=1.0, ground=True)
 
 FX = {"phone": fx_phone, "envelope": fx_envelope, "sneaker": fx_sneaker, "bolt": fx_bolt, "briefcase": fx_briefcase, "cctv": fx_cctv,
       "tanktop": fx_tanktop, "oilbottle": fx_oilbottle, "puddle": fx_puddle, "speaker": fx_speaker, "vip": fx_vip, "discoball": fx_discoball,
-      "plant": fx_plant, "bull": fx_bull, "bombbox": fx_bombbox, "flask": fx_flask, "badge": fx_badge}
+      "plant": fx_plant, "bull": fx_bull, "bombbox": fx_bombbox, "flask": fx_flask, "badge": fx_badge,
+      "tibbers": fx_tibbers, "garensword": fx_garensword, "dariusaxe": fx_dariusaxe, "grenade": fx_grenade, "fireball": fx_fireball,
+      "baguette": fx_baguette, "slipper": fx_slipper, "trap": fx_trap, "lotus": fx_lotus, "runestones": fx_runestones,
+      "scroll": fx_scroll, "tentacle": fx_tentacle, "idol": fx_idol}
 
 def build_fx():
     global COLL
@@ -768,8 +755,10 @@ def build_fx():
         root.location.x = i * 4  # spread out for Blender previews; the client resets the position
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, "fx.glb")
+    for img in bpy.data.images:  # Sketchfab textures: 512 px is plenty at MOBA camera distance
+        if max(img.size) > 512: img.scale(*(max(1, c * 512 // max(img.size)) for c in img.size))
     bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", export_yup=True, export_apply=True, export_materials="EXPORT",
-                              export_animations=False, export_cameras=False, export_lights=False)
+                              export_image_format="WEBP", export_animations=False, export_cameras=False, export_lights=False)
     return path
 
 def main(ids=None):
